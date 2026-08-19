@@ -18,9 +18,7 @@ interface McpPermission {
   host: string
   port: number
   username: string
-  read_access: boolean
-  site_manage: boolean
-  container_manage: boolean
+  permission_level: 'none' | 'read' | 'manage' | 'system'
 }
 
 interface McpAuditEntry {
@@ -39,9 +37,9 @@ const copy = {
     loading: '正在检测…', registered: '已注册并启用', registeredDisabled: '已注册，等待用户启用', outdated: '注册路径需要更新', unregistered: '尚未注册',
     codexMissing: '未找到 ChatGPT / Codex CLI。安装后重新检测。', register: '注册 MCP', reregister: '重新注册',
     unregister: '注销并撤销权限', refresh: '刷新状态', path: '注册路径', codex: 'Codex 路径', version: 'MCP 版本',
-    read: '只读访问', sites: '站点管理', containers: '容器管理', rootWarning: 'root 默认不授权，请确认后开启。',
+    level: '权限级别', none: '未授权', read: '只读', manage: '管理', system: '系统管理', rootWarning: 'root 的写操作需要系统管理权限。',
     noServers: '尚未保存服务器配置。', noAudit: '暂无 MCP 调用记录。', success: '成功', failed: '失败',
-    permissionHint: '授予管理权限后不再逐次确认；撤销后立即生效。管理权限会自动包含只读访问。',
+    permissionHint: '每台服务器只选择一个级别：管理包含只读，系统管理包含全部权限。授权后不再逐次确认，撤销后立即生效。',
     restartHint: '注册变更后请重启 ChatGPT / Codex。', error: '操作失败',
   },
   en: {
@@ -49,9 +47,9 @@ const copy = {
     loading: 'Checking…', registered: 'Registered and enabled', registeredDisabled: 'Registered, waiting for user enablement', outdated: 'Registration path needs updating', unregistered: 'Not registered',
     codexMissing: 'ChatGPT / Codex CLI was not found. Install it and check again.', register: 'Register MCP', reregister: 'Re-register',
     unregister: 'Unregister and revoke access', refresh: 'Refresh', path: 'Registered path', codex: 'Codex path', version: 'MCP version',
-    read: 'Read access', sites: 'Site management', containers: 'Container management', rootWarning: 'Root is denied by default. Enable only after review.',
+    level: 'Access level', none: 'No access', read: 'Read only', manage: 'Manage', system: 'System management', rootWarning: 'Write operations through root require system management access.',
     noServers: 'No server profiles are saved.', noAudit: 'No MCP calls recorded.', success: 'Success', failed: 'Failed',
-    permissionHint: 'Management permissions do not prompt per operation. Revocation takes effect immediately and management implies read access.',
+    permissionHint: 'Choose one level per server: management includes read access, and system management includes all access. Revocation takes effect immediately.',
     restartHint: 'Restart ChatGPT / Codex after registration changes.', error: 'Operation failed',
   },
 }
@@ -100,22 +98,13 @@ export default function McpPanel() {
     }
   }
 
-  const updatePermission = async (permission: McpPermission, field: 'read_access' | 'site_manage' | 'container_manage') => {
-    const next = { ...permission, [field]: !permission[field] }
-    if (field === 'read_access' && !next.read_access) {
-      next.site_manage = false
-      next.container_manage = false
-    }
-    if ((field === 'site_manage' && next.site_manage) || (field === 'container_manage' && next.container_manage)) {
-      next.read_access = true
-    }
+  const updatePermission = async (permission: McpPermission, permissionLevel: McpPermission['permission_level']) => {
+    const next = { ...permission, permission_level: permissionLevel }
     setPermissions(current => current.map(item => item.profile_id === next.profile_id ? next : item))
     try {
       await invoke('mcp_set_server_permission', {
         profileId: next.profile_id,
-        readAccess: next.read_access,
-        siteManage: next.site_manage,
-        containerManage: next.container_manage,
+        permissionLevel: next.permission_level,
       })
     } catch (e) {
       setError(String(e))
@@ -170,22 +159,19 @@ export default function McpPanel() {
                 <span>{permission.username}@{permission.host}:{permission.port}</span>
                 {permission.username === 'root' && <em>{text.rootWarning}</em>}
               </div>
-              <div className="mcp-permission-toggles">
-                {([
-                  ['read_access', text.read],
-                  ['site_manage', text.sites],
-                  ['container_manage', text.containers],
-                ] as const).map(([field, label]) => (
-                  <button
-                    key={field}
-                    className={`firewall-toggle ${permission[field] ? 'on' : 'off'}`}
-                    onClick={() => updatePermission(permission, field)}
-                    disabled={!status?.current || !status.enabled}
-                  >
-                    <span className="toggle-track"><span className="toggle-thumb" /></span>
-                    <span className="toggle-label">{label}</span>
-                  </button>
-                ))}
+              <div className="mcp-permission-level">
+                <label htmlFor={`mcp-level-${permission.profile_id}`}>{text.level}</label>
+                <select
+                  id={`mcp-level-${permission.profile_id}`}
+                  value={permission.permission_level}
+                  onChange={event => updatePermission(permission, event.target.value as McpPermission['permission_level'])}
+                  disabled={!status?.current || !status.enabled}
+                >
+                  <option value="none">{text.none}</option>
+                  <option value="read">{text.read}</option>
+                  <option value="manage">{text.manage}</option>
+                  <option value="system">{text.system}</option>
+                </select>
               </div>
             </div>
           ))}

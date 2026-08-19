@@ -74,9 +74,7 @@ pub struct McpServerPermission {
     pub host: String,
     pub port: u16,
     pub username: String,
-    pub read_access: bool,
-    pub site_manage: bool,
-    pub container_manage: bool,
+    pub permission_level: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -90,11 +88,33 @@ pub struct McpAuditEntry {
     pub message: String,
 }
 
-#[derive(Clone, Copy)]
-enum RequiredAccess {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum PermissionLevel {
+    None,
     Read,
-    SiteManage,
-    ContainerManage,
+    Manage,
+    System,
+}
+
+impl PermissionLevel {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "none" => Some(Self::None),
+            "read" => Some(Self::Read),
+            "manage" => Some(Self::Manage),
+            "system" => Some(Self::System),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Read => "read",
+            Self::Manage => "manage",
+            Self::System => "system",
+        }
+    }
 }
 
 fn discovery_path() -> PathBuf {
@@ -240,10 +260,13 @@ async fn handle_broker_connection(
 }
 
 fn audit_target(params: &Value) -> String {
-    for key in ["container", "domain", "profile_id"] {
+    for key in ["container", "domain", "path", "profile_id"] {
         if let Some(value) = params.get(key).and_then(Value::as_str) {
             return value.chars().take(200).collect();
         }
+    }
+    if params.get("command").is_some() {
+        return "command".to_string();
     }
     String::new()
 }
@@ -277,19 +300,19 @@ fn mcp_enabled(conn: &rusqlite::Connection) -> bool {
     .unwrap_or(false)
 }
 
-fn has_access(conn: &rusqlite::Connection, profile_id: &str, required: RequiredAccess) -> bool {
-    let column = match required {
-        RequiredAccess::Read => "read_access",
-        RequiredAccess::SiteManage => "site_manage",
-        RequiredAccess::ContainerManage => "container_manage",
-    };
+fn permission_level(conn: &rusqlite::Connection, profile_id: &str) -> PermissionLevel {
     conn.query_row(
-        &format!("SELECT {column} FROM mcp_permissions WHERE profile_id = ?1"),
+        "SELECT permission_level FROM mcp_permissions WHERE profile_id = ?1",
         params![profile_id],
-        |row| row.get::<_, i64>(0),
+        |row| row.get::<_, String>(0),
     )
-    .map(|value| value == 1)
-    .unwrap_or(false)
+    .ok()
+    .and_then(|value| PermissionLevel::parse(&value))
+    .unwrap_or(PermissionLevel::None)
+}
+
+fn has_access(conn: &rusqlite::Connection, profile_id: &str, required: PermissionLevel) -> bool {
+    permission_level(conn, profile_id) >= required
 }
 
 async fn dispatch_broker_request(
@@ -310,7 +333,7 @@ async fn dispatch_broker_request(
                 }
                 ConfigManager::list(&conn)
                     .into_iter()
-                    .filter(|profile| has_access(&conn, &profile.id, RequiredAccess::Read))
+                    .filter(|profile| has_access(&conn, &profile.id, PermissionLevel::Read))
                     .collect::<Vec<_>>()
             };
             let ssh_state = app.state::<Arc<AsyncMutex<SshManager>>>();
@@ -334,7 +357,7 @@ async fn dispatch_broker_request(
         "get_server_status" => {
             let profile_id = required_string(&params, "profile_id")?;
             let (session, cache, session_id) =
-                active_session(app, profile_id, RequiredAccess::Read).await?;
+                active_session(app, profile_id, PermissionLevel::Read).await?;
             let system = server::get_system_info(&session, &cache, &session_id).await?;
             let services = server::get_service_statuses(&session, &cache, &session_id).await?;
             Ok(json!({ "system": system, "services": services }))
@@ -342,14 +365,14 @@ async fn dispatch_broker_request(
         "get_services" => {
             let profile_id = required_string(&params, "profile_id")?;
             let (session, cache, session_id) =
-                active_session(app, profile_id, RequiredAccess::Read).await?;
+                active_session(app, profile_id, PermissionLevel::Read).await?;
             let services = server::get_service_statuses(&session, &cache, &session_id).await?;
             serde_json::to_value(services).map_err(|e| e.to_string())
         }
         "get_nginx_status" => {
             let profile_id = required_string(&params, "profile_id")?;
             let (session, cache, session_id) =
-                active_session(app, profile_id, RequiredAccess::Read).await?;
+                active_session(app, profile_id, PermissionLevel::Read).await?;
             let service = server::get_service_info(&session, &cache, &session_id, "nginx").await?;
             let (config_valid, config_test_output) =
                 server::test_nginx_config(&session, &cache, &session_id).await?;
@@ -364,14 +387,14 @@ async fn dispatch_broker_request(
         "get_container_runtime" => {
             let profile_id = required_string(&params, "profile_id")?;
             let (session, cache, session_id) =
-                active_session(app, profile_id, RequiredAccess::Read).await?;
+                active_session(app, profile_id, PermissionLevel::Read).await?;
             let status = server::check_docker(&session, &cache, &session_id).await?;
             serde_json::to_value(status).map_err(|e| e.to_string())
         }
         "list_containers" => {
             let profile_id = required_string(&params, "profile_id")?;
             let (session, cache, session_id) =
-                active_session(app, profile_id, RequiredAccess::Read).await?;
+                active_session(app, profile_id, PermissionLevel::Read).await?;
             let containers = server::docker_container_list(&session, &cache, &session_id).await?;
             serde_json::to_value(containers).map_err(|e| e.to_string())
         }
@@ -380,7 +403,7 @@ async fn dispatch_broker_request(
             let requested = required_string(&params, "container")?;
             let lines = optional_usize(&params, "lines", 200, 1000)?;
             let (session, cache, session_id) =
-                active_session(app, profile_id, RequiredAccess::Read).await?;
+                active_session(app, profile_id, PermissionLevel::Read).await?;
             let containers = server::docker_container_list(&session, &cache, &session_id).await?;
             let container = containers
                 .iter()
@@ -395,12 +418,62 @@ async fn dispatch_broker_request(
                 "logs": logs
             }))
         }
+        "read_file" => {
+            let profile_id = required_string(&params, "profile_id")?;
+            let path = required_remote_path(&params)?;
+            let max_bytes = optional_usize(&params, "max_bytes", 65_536, 131_072)?;
+            let (session, _, _) =
+                active_session(app, profile_id, PermissionLevel::Read).await?;
+            let content = crate::ssh::session_read_file(&session, path).await?;
+            let (content, truncated) = truncate_utf8(&content, max_bytes);
+            Ok(json!({ "path": path, "content": content, "truncated": truncated }))
+        }
+        "write_file" => {
+            let profile_id = required_string(&params, "profile_id")?;
+            let path = required_remote_path(&params)?;
+            let content = params
+                .get("content")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Missing string parameter: content".to_string())?;
+            if content.len() > 131_072 {
+                return Err("File content exceeds the 131072 byte MCP limit".to_string());
+            }
+            let (session, _, _) =
+                active_session(app, profile_id, PermissionLevel::Manage).await?;
+            crate::ssh::session_write_file(&session, path, content).await?;
+            Ok(json!({ "path": path, "bytes_written": content.len() }))
+        }
+        "run_command" => {
+            let profile_id = required_string(&params, "profile_id")?;
+            let command = required_command(&params)?;
+            reject_privilege_escalation(command)?;
+            let timeout = optional_usize(&params, "timeout_seconds", 60, 300)? as u64;
+            let (session, _, _) =
+                active_session(app, profile_id, PermissionLevel::Manage).await?;
+            let (stdout, stderr, exit_code) =
+                crate::ssh::session_exec_with_output(&session, command, timeout).await?;
+            Ok(command_result(stdout, stderr, exit_code))
+        }
+        "run_privileged_command" => {
+            let profile_id = required_string(&params, "profile_id")?;
+            let command = required_command(&params)?;
+            let timeout = optional_usize(&params, "timeout_seconds", 60, 300)? as u64;
+            let (session, _, _) =
+                active_session(app, profile_id, PermissionLevel::System).await?;
+            let quoted = shell_single_quote(command);
+            let elevated = format!(
+                "if [ \"$(id -u)\" -eq 0 ]; then exec sh -lc {quoted}; else exec sudo -n -- sh -lc {quoted}; fi"
+            );
+            let (stdout, stderr, exit_code) =
+                crate::ssh::session_exec_with_output(&session, &elevated, timeout).await?;
+            Ok(command_result(stdout, stderr, exit_code))
+        }
         "run_container_action" => {
             let profile_id = required_string(&params, "profile_id")?;
             let requested = required_string(&params, "container")?;
             let action = required_container_action(&params)?;
             let (session, cache, session_id) =
-                active_session(app, profile_id, RequiredAccess::ContainerManage).await?;
+                active_session(app, profile_id, PermissionLevel::Manage).await?;
             let containers = server::docker_container_list(&session, &cache, &session_id).await?;
             let container = containers
                 .iter()
@@ -433,14 +506,14 @@ async fn dispatch_broker_request(
         "list_images" => {
             let profile_id = required_string(&params, "profile_id")?;
             let (session, cache, session_id) =
-                active_session(app, profile_id, RequiredAccess::Read).await?;
+                active_session(app, profile_id, PermissionLevel::Read).await?;
             let images = server::docker_image_list(&session, &cache, &session_id).await?;
             serde_json::to_value(images).map_err(|e| e.to_string())
         }
         "list_sites" => {
             let profile_id = required_string(&params, "profile_id")?;
             let (session, cache, session_id) =
-                active_session(app, profile_id, RequiredAccess::Read).await?;
+                active_session(app, profile_id, PermissionLevel::Read).await?;
             let sites = server::list_sites(&session, &cache, &session_id).await?;
             serde_json::to_value(sites).map_err(|e| e.to_string())
         }
@@ -452,7 +525,7 @@ async fn dispatch_broker_request(
                 .and_then(Value::as_bool)
                 .ok_or_else(|| "Missing boolean parameter: enabled".to_string())?;
             let (session, cache, session_id) =
-                active_session(app, profile_id, RequiredAccess::SiteManage).await?;
+                active_session(app, profile_id, PermissionLevel::Manage).await?;
             let sites = server::list_sites(&session, &cache, &session_id).await?;
             let site = sites
                 .iter()
@@ -500,6 +573,61 @@ fn optional_usize(params: &Value, name: &str, default: usize, max: usize) -> Res
     Ok(value)
 }
 
+fn required_remote_path<'a>(params: &'a Value) -> Result<&'a str, String> {
+    let path = required_string(params, "path")?;
+    if !path.starts_with('/') || path.contains('\0') || path.len() > 4096 {
+        return Err("Parameter path must be an absolute remote path up to 4096 bytes".to_string());
+    }
+    Ok(path)
+}
+
+fn required_command<'a>(params: &'a Value) -> Result<&'a str, String> {
+    let command = required_string(params, "command")?;
+    if command.contains('\0') || command.len() > 65_536 {
+        return Err("Parameter command exceeds the 65536 byte MCP limit".to_string());
+    }
+    Ok(command)
+}
+
+fn reject_privilege_escalation(command: &str) -> Result<(), String> {
+    let words = command
+        .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_' || character == '-'))
+        .map(str::to_ascii_lowercase);
+    if words.into_iter().any(|word| matches!(word.as_str(), "sudo" | "su" | "doas" | "pkexec")) {
+        return Err(
+            "Privilege escalation is not allowed with management access. Use the privileged command tool with system access."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> (String, bool) {
+    if value.len() <= max_bytes {
+        return (value.to_string(), false);
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    (value[..end].to_string(), true)
+}
+
+fn command_result(stdout: String, stderr: String, exit_code: i32) -> Value {
+    let (stdout, stdout_truncated) = truncate_utf8(&stdout, 65_536);
+    let (stderr, stderr_truncated) = truncate_utf8(&stderr, 65_536);
+    json!({
+        "stdout": stdout,
+        "stderr": stderr,
+        "exit_code": exit_code,
+        "truncated": stdout_truncated || stderr_truncated
+    })
+}
+
 fn required_container_action(params: &Value) -> Result<&str, String> {
     let action = required_string(params, "action")?;
     match action {
@@ -511,7 +639,7 @@ fn required_container_action(params: &Value) -> Result<&str, String> {
 async fn active_session(
     app: &AppHandle,
     profile_id: &str,
-    required: RequiredAccess,
+    required: PermissionLevel,
 ) -> Result<(crate::ssh::SshSession, Arc<crate::ssh::SshCache>, String), String> {
     let db = app.state::<DbPool>();
     let profile = {
@@ -521,15 +649,22 @@ async fn active_session(
                 "LeePanel MCP is disabled. Enable it in MCP / AI Integration settings.".to_string(),
             );
         }
-        if !has_access(&conn, profile_id, required) {
-            return Err(format!(
-                "MCP access is not authorized for LeePanel server profile: {profile_id}"
-            ));
-        }
-        ConfigManager::list(&conn)
+        let profile = ConfigManager::list(&conn)
             .into_iter()
             .find(|profile| profile.id == profile_id)
-            .ok_or_else(|| format!("LeePanel server profile not found: {profile_id}"))?
+            .ok_or_else(|| format!("LeePanel server profile not found: {profile_id}"))?;
+        let effective_required = if profile.username == "root" && required > PermissionLevel::Read {
+            PermissionLevel::System
+        } else {
+            required
+        };
+        if !has_access(&conn, profile_id, effective_required) {
+            return Err(format!(
+                "MCP {} access is not authorized for LeePanel server profile: {profile_id}",
+                effective_required.as_str()
+            ));
+        }
+        profile
     };
     let ssh_state = app.state::<Arc<AsyncMutex<SshManager>>>();
     let manager = ssh_state.lock().await;
@@ -630,6 +765,10 @@ fn tool_to_broker_method(tool: &str) -> Option<&'static str> {
         "leepanel_get_container_runtime" => Some("get_container_runtime"),
         "leepanel_list_containers" => Some("list_containers"),
         "leepanel_get_container_logs" => Some("get_container_logs"),
+        "leepanel_read_file" => Some("read_file"),
+        "leepanel_write_file" => Some("write_file"),
+        "leepanel_run_command" => Some("run_command"),
+        "leepanel_run_privileged_command" => Some("run_privileged_command"),
         "leepanel_run_container_action" => Some("run_container_action"),
         "leepanel_list_images" => Some("list_images"),
         "leepanel_list_sites" => Some("list_sites"),
@@ -692,6 +831,48 @@ fn tool_definitions() -> Vec<Value> {
             "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
         }),
         json!({
+            "name": "leepanel_read_file",
+            "description": "Read a UTF-8 text file from a currently connected LeePanel server. Requires read access. Output is bounded and reports whether it was truncated.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "profile_id": { "type": "string", "description": "LeePanel profile ID returned by leepanel_list_servers." },
+                    "path": { "type": "string", "description": "Absolute remote file path." },
+                    "max_bytes": { "type": "integer", "minimum": 1, "maximum": 131072, "default": 65536 }
+                },
+                "required": ["profile_id", "path"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
+        }),
+        json!({
+            "name": "leepanel_write_file",
+            "description": "Create or replace a UTF-8 text file on a currently connected LeePanel server. Requires management access, or system access when the SSH profile uses root.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "profile_id": { "type": "string", "description": "LeePanel profile ID returned by leepanel_list_servers." },
+                    "path": { "type": "string", "description": "Absolute remote file path." },
+                    "content": { "type": "string", "maxLength": 131072, "description": "Complete UTF-8 file content. Existing content is replaced." }
+                },
+                "required": ["profile_id", "path", "content"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false }
+        }),
+        json!({
+            "name": "leepanel_run_command",
+            "description": "Run a command or script as the connected SSH user. Requires management access; root profiles require system access. Direct sudo, su, doas, and pkexec usage is rejected; use the privileged command tool instead.",
+            "inputSchema": command_schema(),
+            "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false }
+        }),
+        json!({
+            "name": "leepanel_run_privileged_command",
+            "description": "Run a command or script as root through passwordless sudo, or directly when connected as root. Requires system access.",
+            "inputSchema": command_schema(),
+            "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false }
+        }),
+        json!({
             "name": "leepanel_run_container_action",
             "description": "Start, stop, or restart an existing Docker or Podman container currently listed by LeePanel. The exact container ID or name is required.",
             "inputSchema": {
@@ -743,6 +924,19 @@ fn profile_schema() -> Value {
             "profile_id": { "type": "string", "description": "LeePanel profile ID returned by leepanel_list_servers." }
         },
         "required": ["profile_id"],
+        "additionalProperties": false
+    })
+}
+
+fn command_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "profile_id": { "type": "string", "description": "LeePanel profile ID returned by leepanel_list_servers." },
+            "command": { "type": "string", "minLength": 1, "maxLength": 65536, "description": "Shell command or script body to execute." },
+            "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 300, "default": 60 }
+        },
+        "required": ["profile_id", "command"],
         "additionalProperties": false
     })
 }
@@ -935,22 +1129,13 @@ pub fn mcp_list_permissions(
     Ok(profiles
         .into_iter()
         .map(|profile| {
-            let permission = conn
-                .query_row(
-                    "SELECT read_access, site_manage, container_manage FROM mcp_permissions WHERE profile_id = ?1",
-                    params![profile.id],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
-                )
-                .unwrap_or((0, 0, 0));
             McpServerPermission {
+                permission_level: permission_level(&conn, &profile.id).as_str().to_string(),
                 profile_id: profile.id,
                 name: profile.name,
                 host: profile.host,
                 port: profile.port,
                 username: profile.username,
-                read_access: permission.0 == 1,
-                site_manage: permission.1 == 1,
-                container_manage: permission.2 == 1,
             }
         })
         .collect())
@@ -960,9 +1145,7 @@ pub fn mcp_list_permissions(
 pub fn mcp_set_server_permission(
     db: tauri::State<'_, DbPool>,
     profile_id: String,
-    read_access: bool,
-    site_manage: bool,
-    container_manage: bool,
+    permission_level: String,
 ) -> Result<(), String> {
     let conn = db.lock().map_err(|e| e.to_string())?;
     if !ConfigManager::list(&conn)
@@ -971,10 +1154,11 @@ pub fn mcp_set_server_permission(
     {
         return Err(format!("LeePanel server profile not found: {profile_id}"));
     }
-    let effective_read = read_access || site_manage || container_manage;
+    let level = PermissionLevel::parse(&permission_level)
+        .ok_or_else(|| "Permission level must be one of: none, read, manage, system".to_string())?;
     conn.execute(
-        "INSERT OR REPLACE INTO mcp_permissions (profile_id, read_access, site_manage, container_manage) VALUES (?1, ?2, ?3, ?4)",
-        params![profile_id, effective_read as i64, site_manage as i64, container_manage as i64],
+        "INSERT OR REPLACE INTO mcp_permissions (profile_id, permission_level) VALUES (?1, ?2)",
+        params![profile_id, level.as_str()],
     )
     .map_err(|e| format!("Failed to save MCP permission: {e}"))?;
     Ok(())
@@ -1025,6 +1209,10 @@ mod tests {
                 "leepanel_get_container_runtime",
                 "leepanel_list_containers",
                 "leepanel_get_container_logs",
+                "leepanel_read_file",
+                "leepanel_write_file",
+                "leepanel_run_command",
+                "leepanel_run_privileged_command",
                 "leepanel_run_container_action",
                 "leepanel_list_images",
                 "leepanel_list_sites",
@@ -1138,9 +1326,7 @@ mod tests {
             "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
              CREATE TABLE mcp_permissions (
                 profile_id TEXT PRIMARY KEY,
-                read_access INTEGER NOT NULL DEFAULT 0,
-                site_manage INTEGER NOT NULL DEFAULT 0,
-                container_manage INTEGER NOT NULL DEFAULT 0
+                permission_level TEXT NOT NULL DEFAULT 'none'
              );",
         )
         .unwrap();
@@ -1151,31 +1337,47 @@ mod tests {
     fn mcp_is_disabled_and_profiles_are_denied_by_default() {
         let conn = access_test_db();
         assert!(!mcp_enabled(&conn));
-        for access in [
-            RequiredAccess::Read,
-            RequiredAccess::SiteManage,
-            RequiredAccess::ContainerManage,
-        ] {
+        for access in [PermissionLevel::Read, PermissionLevel::Manage, PermissionLevel::System] {
             assert!(!has_access(&conn, "root-profile", access));
         }
     }
 
     #[test]
-    fn permissions_are_scoped_independently() {
+    fn permission_levels_inherit_lower_access() {
         let conn = access_test_db();
         set_mcp_enabled(&conn, true).unwrap();
         conn.execute(
-            "INSERT INTO mcp_permissions (profile_id, read_access, site_manage, container_manage) VALUES (?1, 1, 0, 1)",
+            "INSERT INTO mcp_permissions (profile_id, permission_level) VALUES (?1, 'manage')",
             params!["profile-1"],
         )
         .unwrap();
+        conn.execute(
+            "INSERT INTO mcp_permissions (profile_id, permission_level) VALUES (?1, 'system')",
+            params!["profile-2"],
+        )
+        .unwrap();
         assert!(mcp_enabled(&conn));
-        assert!(has_access(&conn, "profile-1", RequiredAccess::Read));
-        assert!(has_access(
-            &conn,
-            "profile-1",
-            RequiredAccess::ContainerManage
-        ));
-        assert!(!has_access(&conn, "profile-1", RequiredAccess::SiteManage));
+        assert!(has_access(&conn, "profile-1", PermissionLevel::Read));
+        assert!(has_access(&conn, "profile-1", PermissionLevel::Manage));
+        assert!(!has_access(&conn, "profile-1", PermissionLevel::System));
+        assert!(has_access(&conn, "profile-2", PermissionLevel::Read));
+        assert!(has_access(&conn, "profile-2", PermissionLevel::Manage));
+        assert!(has_access(&conn, "profile-2", PermissionLevel::System));
+    }
+
+    #[test]
+    fn management_commands_reject_direct_privilege_escalation() {
+        for command in ["sudo systemctl restart nginx", "su - root", "doas reboot", "pkexec sh"] {
+            assert!(reject_privilege_escalation(command).is_err());
+        }
+        for command in ["systemctl --user status app", "bash ./deploy.sh", "echo sudokus"] {
+            assert!(reject_privilege_escalation(command).is_ok());
+        }
+    }
+
+    #[test]
+    fn utf8_output_truncation_preserves_character_boundaries() {
+        assert_eq!(truncate_utf8("你好abc", 4), ("你".to_string(), true));
+        assert_eq!(truncate_utf8("abc", 4), ("abc".to_string(), false));
     }
 }

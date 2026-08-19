@@ -17,6 +17,29 @@ pub fn db_path() -> PathBuf {
     path
 }
 
+fn migrate_mcp_permission_level(conn: &SqliteConn) -> Result<(), String> {
+    let has_permission_level: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('mcp_permissions') WHERE name='permission_level'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|count| count > 0)
+        .unwrap_or(false);
+    if !has_permission_level {
+        conn.execute_batch(
+            "ALTER TABLE mcp_permissions ADD COLUMN permission_level TEXT NOT NULL DEFAULT 'none';
+             UPDATE mcp_permissions SET permission_level = CASE
+                WHEN site_manage = 1 OR container_manage = 1 THEN 'manage'
+                WHEN read_access = 1 THEN 'read'
+                ELSE 'none'
+             END;",
+        )
+        .map_err(|e| format!("Failed to migrate MCP permission levels: {}", e))?;
+    }
+    Ok(())
+}
+
 /// Initialize the database and create tables if needed.
 pub fn init_db() -> Result<Mutex<SqliteConn>, String> {
     let path = db_path();
@@ -52,9 +75,7 @@ pub fn init_db() -> Result<Mutex<SqliteConn>, String> {
 
         CREATE TABLE IF NOT EXISTS mcp_permissions (
             profile_id TEXT PRIMARY KEY,
-            read_access INTEGER NOT NULL DEFAULT 0,
-            site_manage INTEGER NOT NULL DEFAULT 0,
-            container_manage INTEGER NOT NULL DEFAULT 0
+            permission_level TEXT NOT NULL DEFAULT 'none'
         );
 
         CREATE TABLE IF NOT EXISTS mcp_audit (
@@ -184,9 +205,12 @@ pub fn init_db() -> Result<Mutex<SqliteConn>, String> {
 
     // v5: MCP permissions and audit tables are created idempotently above.
 
+    // v6: replace independent MCP switches with one inherited permission level.
+    migrate_mcp_permission_level(&conn)?;
+
     // Update schema version to latest
     conn.execute(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES ('schema_version', '5')",
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('schema_version', '6')",
         [],
     ).map_err(|e| format!("Failed to update schema_version: {}", e))?;
 
@@ -660,6 +684,43 @@ mod tests {
              CREATE TABLE custom_software (server_host TEXT NOT NULL, package_name TEXT NOT NULL, display_name TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'other', PRIMARY KEY(server_host, package_name));"
         ).unwrap();
         conn
+    }
+
+    #[test]
+    fn migrates_legacy_mcp_permissions_to_inherited_levels() {
+        let conn = SqliteConn::open(":memory:").unwrap();
+        conn.execute_batch(
+            "CREATE TABLE mcp_permissions (
+                profile_id TEXT PRIMARY KEY,
+                read_access INTEGER NOT NULL DEFAULT 0,
+                site_manage INTEGER NOT NULL DEFAULT 0,
+                container_manage INTEGER NOT NULL DEFAULT 0
+             );
+             INSERT INTO mcp_permissions VALUES ('none', 0, 0, 0);
+             INSERT INTO mcp_permissions VALUES ('read', 1, 0, 0);
+             INSERT INTO mcp_permissions VALUES ('site', 1, 1, 0);
+             INSERT INTO mcp_permissions VALUES ('container', 1, 0, 1);",
+        )
+        .unwrap();
+
+        migrate_mcp_permission_level(&conn).unwrap();
+        migrate_mcp_permission_level(&conn).unwrap();
+
+        for (profile, expected) in [
+            ("none", "none"),
+            ("read", "read"),
+            ("site", "manage"),
+            ("container", "manage"),
+        ] {
+            let level: String = conn
+                .query_row(
+                    "SELECT permission_level FROM mcp_permissions WHERE profile_id = ?1",
+                    [profile],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(level, expected);
+        }
     }
 
     // ===== FbFavorites =====

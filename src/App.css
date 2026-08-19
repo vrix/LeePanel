@@ -6071,7 +6071,10 @@ body.dragging-files * {
 .mcp-server-title { display: flex; flex-direction: column; gap: 4px; min-width: 240px; }
 .mcp-server-title span { color: var(--text-muted); font-size: 12px; }
 .mcp-server-title em { color: #f59e0b; font-size: 12px; font-style: normal; }
-.mcp-permission-toggles { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
+.mcp-permission-level { display: flex; align-items: center; gap: 10px; }
+.mcp-permission-level label { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.mcp-permission-level select { min-width: 150px; padding: 7px 30px 7px 10px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
+.mcp-permission-level select:disabled { cursor: not-allowed; opacity: .55; }
 .mcp-audit-list { max-height: 320px; overflow: auto; }
 .mcp-audit-row { display: grid; grid-template-columns: 145px minmax(150px, 1fr) minmax(120px, 1fr) 60px; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
 .mcp-audit-row strong.success { color: #22c55e; }
