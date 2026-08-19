@@ -93,7 +93,15 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "LeePanel ${{ github.ref_name }}"
-          releaseBody: "See the assets to download this version and install."
+          releaseBody: |
+            ## v1.0.22 更新说明
+
+            - 新增 Docker 与 Podman 运行时自动识别及统一管理。
+            - 新增 Podman 容器、镜像和 Compose 操作支持。
+            - 修复仅安装 rootless Podman 时误报 Docker 不可用的问题。
+            - 优化容器运行时状态、错误提示和多语言界面。
+            - 更新独立升级源至 vrix/LeePanel，并启用发布包签名校验。
+            - 版本号更新至 `v1.0.22`。
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}
@@ -146,13 +154,13 @@ jobs:
           DMG_ARM_URL="https://github.com/$REPO/releases/download/$TAG/$DMG_ARM_NAME"
           DMG_ARM_SIG_NAME=$(echo "$ASSETS" | grep -E 'aarch64.*\.app\.tar\.gz\.sig$' | head -1)
 
-          # Linux
-          DEB_NAME=$(echo "$ASSETS" | grep -E '\.deb$' | grep -v '\.sig' | head -1)
-          DEB_URL="https://github.com/$REPO/releases/download/$TAG/$DEB_NAME"
-          DEB_SIG_NAME=$(echo "$ASSETS" | grep -E '\.deb\.sig$' | head -1)
+          # Linux updater artifact (createUpdaterArtifacts: true)
+          APPIMAGE_NAME=$(echo "$ASSETS" | grep -E '\.AppImage$' | grep -v '\.sig' | head -1)
+          APPIMAGE_URL="https://github.com/$REPO/releases/download/$TAG/$APPIMAGE_NAME"
+          APPIMAGE_SIG_NAME=$(echo "$ASSETS" | grep -E '\.AppImage\.sig$' | head -1)
 
           # Download signatures
-          for name in "$EXE_NAME" "$EXE_SIG_NAME" "$DMG_INTEL_NAME" "$DMG_INTEL_SIG_NAME" "$DMG_ARM_NAME" "$DMG_ARM_SIG_NAME" "$DEB_NAME" "$DEB_SIG_NAME"; do
+          for name in "$EXE_NAME" "$EXE_SIG_NAME" "$DMG_INTEL_NAME" "$DMG_INTEL_SIG_NAME" "$DMG_ARM_NAME" "$DMG_ARM_SIG_NAME" "$APPIMAGE_NAME" "$APPIMAGE_SIG_NAME"; do
             test -n "$name"
           done
 
@@ -170,9 +178,9 @@ jobs:
           EXE_SIG=$(get_sig "$EXE_SIG_NAME")
           DMG_INTEL_SIG=$(get_sig "$DMG_INTEL_SIG_NAME")
           DMG_ARM_SIG=$(get_sig "$DMG_ARM_SIG_NAME")
-          DEB_SIG=$(get_sig "$DEB_SIG_NAME")
+          APPIMAGE_SIG=$(get_sig "$APPIMAGE_SIG_NAME")
 
-          for signature in "$EXE_SIG" "$DMG_INTEL_SIG" "$DMG_ARM_SIG" "$DEB_SIG"; do
+          for signature in "$EXE_SIG" "$DMG_INTEL_SIG" "$DMG_ARM_SIG" "$APPIMAGE_SIG"; do
             test -n "$signature"
           done
 
@@ -197,8 +205,8 @@ jobs:
                 "url": "$DMG_ARM_URL"
               },
               "linux-x86_64": {
-                "signature": "$DEB_SIG",
-                "url": "$DEB_URL"
+                "signature": "$APPIMAGE_SIG",
+                "url": "$APPIMAGE_URL"
               }
             }
           }
