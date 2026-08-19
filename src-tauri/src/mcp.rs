@@ -271,6 +271,40 @@ async fn dispatch_broker_request(
                 "logs": logs
             }))
         }
+        "run_container_action" => {
+            let profile_id = required_string(&params, "profile_id")?;
+            let requested = required_string(&params, "container")?;
+            let action = required_container_action(&params)?;
+            let (session, cache, session_id) = active_session(app, profile_id).await?;
+            let containers = server::docker_container_list(&session, &cache, &session_id).await?;
+            let container = containers
+                .iter()
+                .find(|container| container.id == requested || container.name == requested)
+                .ok_or_else(|| format!("Container not found in LeePanel: {requested}"))?;
+            let container_id = container.id.clone();
+            let container_name = container.name.clone();
+            let before = json!({ "state": container.state, "status": container.status });
+            let message = server::docker_container_action(
+                &session,
+                &cache,
+                &session_id,
+                &container_id,
+                action,
+            )
+            .await?;
+            let after = server::docker_container_list(&session, &cache, &session_id)
+                .await?
+                .into_iter()
+                .find(|container| container.id == container_id)
+                .map(|container| json!({ "state": container.state, "status": container.status }));
+            Ok(json!({
+                "container": { "id": container_id, "name": container_name },
+                "action": action,
+                "message": message,
+                "before": before,
+                "after": after
+            }))
+        }
         "list_images" => {
             let profile_id = required_string(&params, "profile_id")?;
             let (session, cache, session_id) = active_session(app, profile_id).await?;
@@ -336,6 +370,14 @@ fn optional_usize(params: &Value, name: &str, default: usize, max: usize) -> Res
         .filter(|value| (1..=max).contains(value))
         .ok_or_else(|| format!("Parameter {name} must be an integer between 1 and {max}"))?;
     Ok(value)
+}
+
+fn required_container_action(params: &Value) -> Result<&str, String> {
+    let action = required_string(params, "action")?;
+    match action {
+        "start" | "stop" | "restart" => Ok(action),
+        _ => Err("Parameter action must be one of: start, stop, restart".to_string()),
+    }
 }
 
 async fn active_session(
@@ -449,6 +491,7 @@ fn tool_to_broker_method(tool: &str) -> Option<&'static str> {
         "leepanel_get_container_runtime" => Some("get_container_runtime"),
         "leepanel_list_containers" => Some("list_containers"),
         "leepanel_get_container_logs" => Some("get_container_logs"),
+        "leepanel_run_container_action" => Some("run_container_action"),
         "leepanel_list_images" => Some("list_images"),
         "leepanel_list_sites" => Some("list_sites"),
         "leepanel_set_site_enabled" => Some("set_site_enabled"),
@@ -508,6 +551,21 @@ fn tool_definitions() -> Vec<Value> {
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
+        }),
+        json!({
+            "name": "leepanel_run_container_action",
+            "description": "Start, stop, or restart an existing Docker or Podman container currently listed by LeePanel. The exact container ID or name is required.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "profile_id": { "type": "string", "description": "LeePanel profile ID returned by leepanel_list_servers." },
+                    "container": { "type": "string", "description": "Exact container ID or name returned by leepanel_list_containers." },
+                    "action": { "type": "string", "enum": ["start", "stop", "restart"], "description": "Controlled lifecycle action to perform." }
+                },
+                "required": ["profile_id", "container", "action"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false }
         }),
         json!({
             "name": "leepanel_list_images",
@@ -652,6 +710,7 @@ mod tests {
                 "leepanel_get_container_runtime",
                 "leepanel_list_containers",
                 "leepanel_get_container_logs",
+                "leepanel_run_container_action",
                 "leepanel_list_images",
                 "leepanel_list_sites",
                 "leepanel_set_site_enabled",
@@ -722,5 +781,39 @@ mod tests {
         );
         assert!(optional_usize(&json!({ "lines": 0 }), "lines", 200, 1000).is_err());
         assert!(optional_usize(&json!({ "lines": 1001 }), "lines", 200, 1000).is_err());
+    }
+
+    #[test]
+    fn container_action_schema_is_restricted() {
+        let tools = tool_definitions();
+        let action = tools
+            .iter()
+            .find(|tool| tool["name"] == "leepanel_run_container_action")
+            .unwrap();
+        assert_eq!(
+            action.pointer("/inputSchema/properties/action/enum"),
+            Some(&json!(["start", "stop", "restart"]))
+        );
+        assert_eq!(
+            action.pointer("/inputSchema/required"),
+            Some(&json!(["profile_id", "container", "action"]))
+        );
+        assert_eq!(
+            action.pointer("/annotations/destructiveHint"),
+            Some(&json!(true))
+        );
+    }
+
+    #[test]
+    fn container_action_rejects_unapproved_operations() {
+        for action in ["start", "stop", "restart"] {
+            assert_eq!(
+                required_container_action(&json!({ "action": action })),
+                Ok(action)
+            );
+        }
+        for action in ["pause", "unpause", "delete", "rm", "exec"] {
+            assert!(required_container_action(&json!({ "action": action })).is_err());
+        }
     }
 }

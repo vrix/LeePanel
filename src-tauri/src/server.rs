@@ -7490,7 +7490,15 @@ pub async fn docker_container_action(
             action, err
         ));
     }
-    Ok(format!("Container {} {}ed successfully", safe_id, action))
+    let past_tense = match action {
+        "start" => "started",
+        "stop" => "stopped",
+        "restart" => "restarted",
+        "pause" => "paused",
+        "unpause" => "unpaused",
+        _ => unreachable!(),
+    };
+    Ok(format!("Container {} {} successfully", safe_id, past_tense))
 }
 
 /// Remove a container
