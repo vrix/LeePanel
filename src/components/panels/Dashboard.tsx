@@ -182,7 +182,7 @@ export default function Dashboard({ sessionId, onNavigate }: DashboardProps) {
             <p>{t('about.line4')}</p>
             <p>{t('about.line5')}</p>
             <p>{t('about.line6')}</p>
-            <p>{t('about.line7')} <a href="#" onClick={(e) => { e.preventDefault(); open('https://github.com/gna1280072/LeePanel/discussions') }}>{t('about.github')}</a></p>
+            <p>{t('about.line7')} <a href="#" onClick={(e) => { e.preventDefault(); open('https://github.com/vrix/LeePanel/discussions') }}>{t('about.github')}</a></p>
             <p>{t('about.line8')}</p>
           </div>
         </div>

@@ -39,7 +39,7 @@ A lightweight cross-platform desktop app built with Tauri 2 + React, providing a
 
 Installer as small as **6 MB** — lightweight and flexible! Completely replacing traditional browser-based panels.
 
-If you have any suggestions or feedback, feel free to share them in [GitHub Discussions](https://github.com/gna1280072/LeePanel/discussions).
+If you have any suggestions or feedback, feel free to share them in [GitHub Discussions](https://github.com/vrix/LeePanel/discussions).
 
 🌐 Website: https://www.LeePanel.com
 

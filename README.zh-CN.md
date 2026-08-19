@@ -37,7 +37,7 @@ LeePanel — 免费开源，下一代 Linux 服务器管理面板软件。
 
 安装包最小仅 **6 MB** 起，灵活小巧！彻底取代传统浏览器面板。
 
-使用过程中如有任何建议或意见，欢迎前往 [GitHub Discussions](https://github.com/gna1280072/LeePanel/discussions) 交流反馈。
+使用过程中如有任何建议或意见，欢迎前往 [GitHub Discussions](https://github.com/vrix/LeePanel/discussions) 交流反馈。
 
 🌐 官网: https://www.LeePanel.com
 
