@@ -94,7 +94,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "LeePanel ${{ github.ref_name }}"
           releaseBody: |
-            ## v1.0.23 更新说明
+            ## v1.0.24 更新说明
 
             - 新增 LeePanel MCP，可由 ChatGPT/Codex 查询服务器和站点状态。
             - 新增 Nginx 检查、核心服务状态、Docker/Podman 状态、容器与镜像列表及受限容器日志等只读 MCP 工具。
@@ -106,7 +106,7 @@ jobs:
             - MCP 默认关闭且默认无服务器权限；授权后不再逐次确认，并记录最近调用审计。
             - MCP 注册、升级更新、失败回滚和卸载清理沿用 MyTerm 的技术方案。
             - 修正讨论功能链接，统一指向 vrix/LeePanel。
-            - 版本号更新至 `v1.0.23`。
+            - 版本号更新至 `v1.0.24`。
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}
