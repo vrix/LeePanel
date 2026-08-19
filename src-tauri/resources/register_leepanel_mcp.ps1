@@ -56,6 +56,18 @@ function Restore-PreviousMcp($previous) {
   return $code -eq 0
 }
 
+function Get-LeePanelVersion([string]$path) {
+  $startInfo = [Diagnostics.ProcessStartInfo]::new($path, '--mcp-version')
+  $startInfo.UseShellExecute = $false
+  $startInfo.RedirectStandardOutput = $true
+  $startInfo.CreateNoWindow = $true
+  $process = [Diagnostics.Process]::Start($startInfo)
+  $output = $process.StandardOutput.ReadToEnd().Trim()
+  $process.WaitForExit()
+  if ($process.ExitCode -ne 0) { return '' }
+  return $output
+}
+
 $previous = $null
 $previousPreference = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
@@ -103,8 +115,8 @@ if (-not $registered -or
   throw "LeePanel MCP verification failed. Previous registration restored: $restored"
 }
 
-$version = (& $leepanel --mcp-version).Trim()
-if ($LASTEXITCODE -ne 0 -or -not $version) {
+$version = Get-LeePanelVersion $leepanel
+if (-not $version) {
   $restored = Restore-PreviousMcp $previous
   throw "LeePanel MCP version verification failed. Previous registration restored: $restored"
 }

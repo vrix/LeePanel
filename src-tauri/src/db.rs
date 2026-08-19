@@ -50,6 +50,23 @@ pub fn init_db() -> Result<Mutex<SqliteConn>, String> {
             value TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS mcp_permissions (
+            profile_id TEXT PRIMARY KEY,
+            read_access INTEGER NOT NULL DEFAULT 0,
+            site_manage INTEGER NOT NULL DEFAULT 0,
+            container_manage INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS mcp_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            profile_id TEXT NOT NULL DEFAULT '',
+            method TEXT NOT NULL,
+            target TEXT NOT NULL DEFAULT '',
+            success INTEGER NOT NULL,
+            message TEXT NOT NULL DEFAULT ''
+        );
+
         CREATE TABLE IF NOT EXISTS fb_favorites (
             server_host TEXT NOT NULL,
             path TEXT NOT NULL,
@@ -165,9 +182,11 @@ pub fn init_db() -> Result<Mutex<SqliteConn>, String> {
         let _ = conn.execute_batch("ALTER TABLE tunnels ADD COLUMN note TEXT NOT NULL DEFAULT '';");
     }
 
+    // v5: MCP permissions and audit tables are created idempotently above.
+
     // Update schema version to latest
     conn.execute(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES ('schema_version', '4')",
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('schema_version', '5')",
         [],
     ).map_err(|e| format!("Failed to update schema_version: {}", e))?;
 

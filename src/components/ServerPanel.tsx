@@ -16,6 +16,7 @@ import PortPanel from './panels/PortPanel'
 import SoftwareRepo from './panels/SoftwareRepo'
 import ServerSettingsPanel from './panels/ServerSettingsPanel'
 import UpdatePanel from './panels/UpdatePanel'
+import McpPanel from './panels/McpPanel'
 import SiteLogsPanel from './panels/SiteLogsPanel'
 import BbrPanel from './panels/BbrPanel'
 import DatabasePanel from './panels/DatabasePanel'
@@ -26,7 +27,7 @@ import Terminal from './Terminal'
 import type { TerminalHandle } from './Terminal'
 import FileBrowser, { type FileBrowserHandle } from './FileBrowser'
 
-type PanelSection = 'dashboard' | 'terminal' | 'files' | 'software' | 'nginx' | 'php' | 'sites' | 'logs' | 'ssl' | 'monitor' | 'firewall' | 'port' | 'tunnel' | 'bbr' | 'docker' | 'database' | 'redis' | 'update' | 'settings' | 'discussions'
+type PanelSection = 'dashboard' | 'terminal' | 'files' | 'software' | 'nginx' | 'php' | 'sites' | 'logs' | 'ssl' | 'monitor' | 'firewall' | 'port' | 'tunnel' | 'bbr' | 'docker' | 'database' | 'redis' | 'mcp' | 'update' | 'settings' | 'discussions'
 
 interface AppSettings {
   auto_reconnect: boolean
@@ -76,6 +77,7 @@ const NAV_ITEMS: { key: PanelSection; labelKey: string; icon: string }[] = [
   { key: 'port', labelKey: 'nav.port', icon: '🔌' },
   { key: 'tunnel', labelKey: 'nav.tunnel', icon: '🔗' },
   { key: 'bbr', labelKey: 'nav.bbr', icon: '🚀' },
+  { key: 'mcp', labelKey: 'MCP / AI', icon: '🤖' },
   { key: 'update', labelKey: 'nav.update', icon: '🔄' },
   { key: 'settings', labelKey: 'nav.settings', icon: '⚙' },
   { key: 'discussions', labelKey: 'nav.discussions', icon: '💬' },
@@ -190,6 +192,8 @@ export default function ServerPanel({ sessionId, connHost, connUsername, initial
         />
       case 'settings':
         return <ServerSettingsPanel sessionId={sessionId} appSettings={appSettings} onToggleAutoReconnect={onToggleAutoReconnect} onUpdateSettings={onUpdateSettings} />
+      case 'mcp':
+        return <McpPanel />
       default:
         return null
     }
@@ -205,7 +209,7 @@ export default function ServerPanel({ sessionId, connHost, connUsername, initial
             onClick={() => {
               if (item.key === 'discussions') { open('https://github.com/vrix/LeePanel/discussions'); return }
               // ponytail: no session → toast hint instead of disabling nav items
-              if (!sessionId) { onShowToast?.(`⚠ ${t('common.connectFirst')}`); return }
+              if (!sessionId && item.key !== 'mcp') { onShowToast?.(`⚠ ${t('common.connectFirst')}`); return }
               setActiveSection(item.key)
             }}
           >

@@ -6062,6 +6062,22 @@ body.dragging-files * {
   margin: 0;
 }
 
+.mcp-panel { display: flex; flex-direction: column; gap: 16px; }
+.mcp-status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-muted) 18%, transparent); }
+.mcp-status-dot.active { background: #22c55e; box-shadow: 0 0 0 3px rgba(34, 197, 94, .18); }
+.mcp-panel code { color: var(--text-muted); font-size: 12px; word-break: break-all; text-align: right; }
+.mcp-server-permission { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.mcp-server-permission:last-child { border-bottom: 0; }
+.mcp-server-title { display: flex; flex-direction: column; gap: 4px; min-width: 240px; }
+.mcp-server-title span { color: var(--text-muted); font-size: 12px; }
+.mcp-server-title em { color: #f59e0b; font-size: 12px; font-style: normal; }
+.mcp-permission-toggles { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
+.mcp-audit-list { max-height: 320px; overflow: auto; }
+.mcp-audit-row { display: grid; grid-template-columns: 145px minmax(150px, 1fr) minmax(120px, 1fr) 60px; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.mcp-audit-row strong.success { color: #22c55e; }
+.mcp-audit-row strong.failed { color: #ef4444; }
+.mcp-audit-row small { grid-column: 2 / -1; color: #ef4444; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* Grid layout for settings cards */
 .settings-grid {
   display: grid;

@@ -46,7 +46,6 @@ pub fn run() {
             app.manage(db);
 
             mcp::start_broker(app.handle().clone());
-            mcp::register_with_codex(app.handle());
 
             Ok(())
         })
@@ -63,6 +62,10 @@ pub fn run() {
             // Config
             commands::config::config_list, commands::config::config_save, commands::config::config_delete, commands::config::config_save_credentials,
             commands::config::clear_proxy_env,
+            // MCP / AI Integration
+            mcp::mcp_get_status, mcp::mcp_register, mcp::mcp_unregister,
+            mcp::mcp_list_permissions, mcp::mcp_set_server_permission,
+            mcp::mcp_list_audit,
             // Settings
             commands::config::settings_load, commands::config::settings_save,
             // Data Directory

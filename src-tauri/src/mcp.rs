@@ -1,4 +1,5 @@
 use crate::{config::ConfigManager, server, ssh::SshManager, DbPool};
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -53,6 +54,47 @@ struct ServerSummary {
     username: String,
     auth_type: String,
     connected: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct McpRegistrationStatus {
+    pub codex_found: bool,
+    pub codex_path: String,
+    pub registered: bool,
+    pub current: bool,
+    pub registered_path: String,
+    pub version: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct McpServerPermission {
+    pub profile_id: String,
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub read_access: bool,
+    pub site_manage: bool,
+    pub container_manage: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct McpAuditEntry {
+    pub id: i64,
+    pub created_at: String,
+    pub profile_id: String,
+    pub method: String,
+    pub target: String,
+    pub success: bool,
+    pub message: String,
+}
+
+#[derive(Clone, Copy)]
+enum RequiredAccess {
+    Read,
+    SiteManage,
+    ContainerManage,
 }
 
 fn discovery_path() -> PathBuf {
@@ -161,17 +203,31 @@ async fn handle_broker_connection(
             error: Some("Unauthorized LeePanel AI Broker request".to_string()),
         }
     } else {
-        match dispatch_broker_request(&app, &request.method, request.params).await {
+        let method = request.method.clone();
+        let params = request.params;
+        let profile_id = params
+            .get("profile_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let target = audit_target(&params);
+        match dispatch_broker_request(&app, &method, params).await {
             Ok(result) => BrokerResponse {
-                ok: true,
+                ok: {
+                    record_audit(&app, &profile_id, &method, &target, true, "success");
+                    true
+                },
                 result: Some(result),
                 error: None,
             },
-            Err(error) => BrokerResponse {
-                ok: false,
-                result: None,
-                error: Some(error),
-            },
+            Err(error) => {
+                record_audit(&app, &profile_id, &method, &target, false, &error);
+                BrokerResponse {
+                    ok: false,
+                    result: None,
+                    error: Some(error),
+                }
+            }
         }
     };
     let mut output = serde_json::to_vec(&response)
@@ -181,6 +237,59 @@ async fn handle_broker_connection(
         .write_all(&output)
         .await
         .map_err(|e| format!("Failed to write broker response: {e}"))
+}
+
+fn audit_target(params: &Value) -> String {
+    for key in ["container", "domain", "profile_id"] {
+        if let Some(value) = params.get(key).and_then(Value::as_str) {
+            return value.chars().take(200).collect();
+        }
+    }
+    String::new()
+}
+
+fn record_audit(
+    app: &AppHandle,
+    profile_id: &str,
+    method: &str,
+    target: &str,
+    success: bool,
+    message: &str,
+) {
+    let db = app.state::<DbPool>();
+    if let Ok(conn) = db.lock() {
+        let safe_message: String = message.chars().take(500).collect();
+        let _ = conn.execute(
+            "INSERT INTO mcp_audit (profile_id, method, target, success, message) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![profile_id, method, target, if success { 1 } else { 0 }, safe_message],
+        );
+    };
+}
+
+fn mcp_enabled(conn: &rusqlite::Connection) -> bool {
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = 'mcp_enabled'",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|value| value.parse().ok())
+    .unwrap_or(false)
+}
+
+fn has_access(conn: &rusqlite::Connection, profile_id: &str, required: RequiredAccess) -> bool {
+    let column = match required {
+        RequiredAccess::Read => "read_access",
+        RequiredAccess::SiteManage => "site_manage",
+        RequiredAccess::ContainerManage => "container_manage",
+    };
+    conn.query_row(
+        &format!("SELECT {column} FROM mcp_permissions WHERE profile_id = ?1"),
+        params![profile_id],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|value| value == 1)
+    .unwrap_or(false)
 }
 
 async fn dispatch_broker_request(
@@ -193,7 +302,16 @@ async fn dispatch_broker_request(
             let db = app.state::<DbPool>();
             let profiles = {
                 let conn = db.lock().map_err(|e| e.to_string())?;
+                if !mcp_enabled(&conn) {
+                    return Err(
+                        "LeePanel MCP is disabled. Enable it in MCP / AI Integration settings."
+                            .to_string(),
+                    );
+                }
                 ConfigManager::list(&conn)
+                    .into_iter()
+                    .filter(|profile| has_access(&conn, &profile.id, RequiredAccess::Read))
+                    .collect::<Vec<_>>()
             };
             let ssh_state = app.state::<Arc<AsyncMutex<SshManager>>>();
             let manager = ssh_state.lock().await;
@@ -215,20 +333,23 @@ async fn dispatch_broker_request(
         }
         "get_server_status" => {
             let profile_id = required_string(&params, "profile_id")?;
-            let (session, cache, session_id) = active_session(app, profile_id).await?;
+            let (session, cache, session_id) =
+                active_session(app, profile_id, RequiredAccess::Read).await?;
             let system = server::get_system_info(&session, &cache, &session_id).await?;
             let services = server::get_service_statuses(&session, &cache, &session_id).await?;
             Ok(json!({ "system": system, "services": services }))
         }
         "get_services" => {
             let profile_id = required_string(&params, "profile_id")?;
-            let (session, cache, session_id) = active_session(app, profile_id).await?;
+            let (session, cache, session_id) =
+                active_session(app, profile_id, RequiredAccess::Read).await?;
             let services = server::get_service_statuses(&session, &cache, &session_id).await?;
             serde_json::to_value(services).map_err(|e| e.to_string())
         }
         "get_nginx_status" => {
             let profile_id = required_string(&params, "profile_id")?;
-            let (session, cache, session_id) = active_session(app, profile_id).await?;
+            let (session, cache, session_id) =
+                active_session(app, profile_id, RequiredAccess::Read).await?;
             let service = server::get_service_info(&session, &cache, &session_id, "nginx").await?;
             let (config_valid, config_test_output) =
                 server::test_nginx_config(&session, &cache, &session_id).await?;
@@ -242,13 +363,15 @@ async fn dispatch_broker_request(
         }
         "get_container_runtime" => {
             let profile_id = required_string(&params, "profile_id")?;
-            let (session, cache, session_id) = active_session(app, profile_id).await?;
+            let (session, cache, session_id) =
+                active_session(app, profile_id, RequiredAccess::Read).await?;
             let status = server::check_docker(&session, &cache, &session_id).await?;
             serde_json::to_value(status).map_err(|e| e.to_string())
         }
         "list_containers" => {
             let profile_id = required_string(&params, "profile_id")?;
-            let (session, cache, session_id) = active_session(app, profile_id).await?;
+            let (session, cache, session_id) =
+                active_session(app, profile_id, RequiredAccess::Read).await?;
             let containers = server::docker_container_list(&session, &cache, &session_id).await?;
             serde_json::to_value(containers).map_err(|e| e.to_string())
         }
@@ -256,7 +379,8 @@ async fn dispatch_broker_request(
             let profile_id = required_string(&params, "profile_id")?;
             let requested = required_string(&params, "container")?;
             let lines = optional_usize(&params, "lines", 200, 1000)?;
-            let (session, cache, session_id) = active_session(app, profile_id).await?;
+            let (session, cache, session_id) =
+                active_session(app, profile_id, RequiredAccess::Read).await?;
             let containers = server::docker_container_list(&session, &cache, &session_id).await?;
             let container = containers
                 .iter()
@@ -275,7 +399,8 @@ async fn dispatch_broker_request(
             let profile_id = required_string(&params, "profile_id")?;
             let requested = required_string(&params, "container")?;
             let action = required_container_action(&params)?;
-            let (session, cache, session_id) = active_session(app, profile_id).await?;
+            let (session, cache, session_id) =
+                active_session(app, profile_id, RequiredAccess::ContainerManage).await?;
             let containers = server::docker_container_list(&session, &cache, &session_id).await?;
             let container = containers
                 .iter()
@@ -307,13 +432,15 @@ async fn dispatch_broker_request(
         }
         "list_images" => {
             let profile_id = required_string(&params, "profile_id")?;
-            let (session, cache, session_id) = active_session(app, profile_id).await?;
+            let (session, cache, session_id) =
+                active_session(app, profile_id, RequiredAccess::Read).await?;
             let images = server::docker_image_list(&session, &cache, &session_id).await?;
             serde_json::to_value(images).map_err(|e| e.to_string())
         }
         "list_sites" => {
             let profile_id = required_string(&params, "profile_id")?;
-            let (session, cache, session_id) = active_session(app, profile_id).await?;
+            let (session, cache, session_id) =
+                active_session(app, profile_id, RequiredAccess::Read).await?;
             let sites = server::list_sites(&session, &cache, &session_id).await?;
             serde_json::to_value(sites).map_err(|e| e.to_string())
         }
@@ -324,7 +451,8 @@ async fn dispatch_broker_request(
                 .get("enabled")
                 .and_then(Value::as_bool)
                 .ok_or_else(|| "Missing boolean parameter: enabled".to_string())?;
-            let (session, cache, session_id) = active_session(app, profile_id).await?;
+            let (session, cache, session_id) =
+                active_session(app, profile_id, RequiredAccess::SiteManage).await?;
             let sites = server::list_sites(&session, &cache, &session_id).await?;
             let site = sites
                 .iter()
@@ -383,10 +511,21 @@ fn required_container_action(params: &Value) -> Result<&str, String> {
 async fn active_session(
     app: &AppHandle,
     profile_id: &str,
+    required: RequiredAccess,
 ) -> Result<(crate::ssh::SshSession, Arc<crate::ssh::SshCache>, String), String> {
     let db = app.state::<DbPool>();
     let profile = {
         let conn = db.lock().map_err(|e| e.to_string())?;
+        if !mcp_enabled(&conn) {
+            return Err(
+                "LeePanel MCP is disabled. Enable it in MCP / AI Integration settings.".to_string(),
+            );
+        }
+        if !has_access(&conn, profile_id, required) {
+            return Err(format!(
+                "MCP access is not authorized for LeePanel server profile: {profile_id}"
+            ));
+        }
         ConfigManager::list(&conn)
             .into_iter()
             .find(|profile| profile.id == profile_id)
@@ -656,38 +795,214 @@ fn json_rpc_error(id: Value, code: i32, message: &str) -> Value {
 }
 
 #[cfg(target_os = "windows")]
-pub fn register_with_codex(app: &AppHandle) {
+fn resource_script(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
+    let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
+    [
+        resource_dir.join("resources").join(name),
+        resource_dir.join(name),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .ok_or_else(|| format!("LeePanel MCP resource was not found: {name}"))
+}
+
+#[cfg(target_os = "windows")]
+fn run_mcp_script(app: &AppHandle, name: &str) -> Result<String, String> {
     use std::os::windows::process::CommandExt;
-    let Ok(resource_dir) = app.path().resource_dir() else {
-        return;
-    };
-    let candidates = [
-        resource_dir
-            .join("resources")
-            .join("register_leepanel_mcp.ps1"),
-        resource_dir.join("register_leepanel_mcp.ps1"),
-    ];
-    let Some(script) = candidates.into_iter().find(|path| path.is_file()) else {
-        log::warn!("LeePanel MCP registration script was not found");
-        return;
-    };
-    let Ok(executable) = std::env::current_exe() else {
-        return;
-    };
-    let result = std::process::Command::new("powershell.exe")
+    let script = resource_script(app, name)?;
+    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+    let output = std::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
         .arg(script)
         .arg("-LeePanelPath")
         .arg(executable)
         .creation_flags(0x08000000)
-        .spawn();
-    if let Err(error) = result {
-        log::warn!("Failed to start LeePanel MCP registration: {error}");
+        .output()
+        .map_err(|e| format!("Failed to run LeePanel MCP script: {e}"))?;
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if error.is_empty() {
+            format!("LeePanel MCP script failed with status {}", output.status)
+        } else {
+            error
+        });
     }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn register_with_codex(_app: &AppHandle) {}
+fn run_mcp_script(_app: &AppHandle, _name: &str) -> Result<String, String> {
+    Err("LeePanel MCP registration is currently supported on Windows only".to_string())
+}
+
+fn set_mcp_enabled(conn: &rusqlite::Connection, enabled: bool) -> Result<(), String> {
+    conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('mcp_enabled', ?1)",
+        params![enabled.to_string()],
+    )
+    .map_err(|e| format!("Failed to update MCP setting: {e}"))?;
+    Ok(())
+}
+
+fn registration_status(app: &AppHandle, enabled: bool) -> Result<McpRegistrationStatus, String> {
+    let output = run_mcp_script(app, "get_leepanel_mcp_status.ps1")?;
+    let value: Value = serde_json::from_str(
+        output
+            .lines()
+            .last()
+            .ok_or_else(|| "LeePanel MCP status returned no data".to_string())?,
+    )
+    .map_err(|e| format!("Invalid LeePanel MCP status: {e}"))?;
+    Ok(McpRegistrationStatus {
+        codex_found: value["codex_found"].as_bool().unwrap_or(false),
+        codex_path: value["codex_path"].as_str().unwrap_or("").to_string(),
+        registered: value["registered"].as_bool().unwrap_or(false),
+        current: value["current"].as_bool().unwrap_or(false),
+        registered_path: value["registered_path"].as_str().unwrap_or("").to_string(),
+        version: value["version"].as_str().unwrap_or("").to_string(),
+        enabled,
+    })
+}
+
+#[tauri::command]
+pub async fn mcp_get_status(
+    app: AppHandle,
+    db: tauri::State<'_, DbPool>,
+) -> Result<McpRegistrationStatus, String> {
+    let enabled = {
+        let conn = db.lock().map_err(|e| e.to_string())?;
+        mcp_enabled(&conn)
+    };
+    tauri::async_runtime::spawn_blocking(move || registration_status(&app, enabled))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mcp_register(
+    app: AppHandle,
+    db: tauri::State<'_, DbPool>,
+) -> Result<McpRegistrationStatus, String> {
+    let app_for_script = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        run_mcp_script(&app_for_script, "register_leepanel_mcp.ps1")
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    {
+        let conn = db.lock().map_err(|e| e.to_string())?;
+        set_mcp_enabled(&conn, true)?;
+    }
+    let status = tauri::async_runtime::spawn_blocking(move || registration_status(&app, true))
+        .await
+        .map_err(|e| e.to_string())??;
+    if !status.current {
+        let conn = db.lock().map_err(|e| e.to_string())?;
+        set_mcp_enabled(&conn, false)?;
+        return Err("LeePanel MCP registration could not be verified".to_string());
+    }
+    Ok(status)
+}
+
+#[tauri::command]
+pub async fn mcp_unregister(
+    app: AppHandle,
+    db: tauri::State<'_, DbPool>,
+) -> Result<McpRegistrationStatus, String> {
+    let app_for_script = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        run_mcp_script(&app_for_script, "unregister_leepanel_mcp.ps1")
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    {
+        let conn = db.lock().map_err(|e| e.to_string())?;
+        set_mcp_enabled(&conn, false)?;
+        conn.execute("DELETE FROM mcp_permissions", [])
+            .map_err(|e| format!("Failed to revoke MCP permissions: {e}"))?;
+    }
+    tauri::async_runtime::spawn_blocking(move || registration_status(&app, false))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn mcp_list_permissions(
+    db: tauri::State<'_, DbPool>,
+) -> Result<Vec<McpServerPermission>, String> {
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    let profiles = ConfigManager::list(&conn);
+    Ok(profiles
+        .into_iter()
+        .map(|profile| {
+            let permission = conn
+                .query_row(
+                    "SELECT read_access, site_manage, container_manage FROM mcp_permissions WHERE profile_id = ?1",
+                    params![profile.id],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
+                )
+                .unwrap_or((0, 0, 0));
+            McpServerPermission {
+                profile_id: profile.id,
+                name: profile.name,
+                host: profile.host,
+                port: profile.port,
+                username: profile.username,
+                read_access: permission.0 == 1,
+                site_manage: permission.1 == 1,
+                container_manage: permission.2 == 1,
+            }
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub fn mcp_set_server_permission(
+    db: tauri::State<'_, DbPool>,
+    profile_id: String,
+    read_access: bool,
+    site_manage: bool,
+    container_manage: bool,
+) -> Result<(), String> {
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    if !ConfigManager::list(&conn)
+        .iter()
+        .any(|profile| profile.id == profile_id)
+    {
+        return Err(format!("LeePanel server profile not found: {profile_id}"));
+    }
+    let effective_read = read_access || site_manage || container_manage;
+    conn.execute(
+        "INSERT OR REPLACE INTO mcp_permissions (profile_id, read_access, site_manage, container_manage) VALUES (?1, ?2, ?3, ?4)",
+        params![profile_id, effective_read as i64, site_manage as i64, container_manage as i64],
+    )
+    .map_err(|e| format!("Failed to save MCP permission: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn mcp_list_audit(db: tauri::State<'_, DbPool>) -> Result<Vec<McpAuditEntry>, String> {
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    let mut statement = conn
+        .prepare("SELECT id, created_at, profile_id, method, target, success, message FROM mcp_audit ORDER BY id DESC LIMIT 100")
+        .map_err(|e| e.to_string())?;
+    let entries = statement
+        .query_map([], |row| {
+            Ok(McpAuditEntry {
+                id: row.get(0)?,
+                created_at: row.get(1)?,
+                profile_id: row.get(2)?,
+                method: row.get(3)?,
+                target: row.get(4)?,
+                success: row.get::<_, i64>(5)? == 1,
+                message: row.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+    Ok(entries)
+}
 
 #[cfg(test)]
 mod tests {
@@ -815,5 +1130,52 @@ mod tests {
         for action in ["pause", "unpause", "delete", "rm", "exec"] {
             assert!(required_container_action(&json!({ "action": action })).is_err());
         }
+    }
+
+    fn access_test_db() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE mcp_permissions (
+                profile_id TEXT PRIMARY KEY,
+                read_access INTEGER NOT NULL DEFAULT 0,
+                site_manage INTEGER NOT NULL DEFAULT 0,
+                container_manage INTEGER NOT NULL DEFAULT 0
+             );",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn mcp_is_disabled_and_profiles_are_denied_by_default() {
+        let conn = access_test_db();
+        assert!(!mcp_enabled(&conn));
+        for access in [
+            RequiredAccess::Read,
+            RequiredAccess::SiteManage,
+            RequiredAccess::ContainerManage,
+        ] {
+            assert!(!has_access(&conn, "root-profile", access));
+        }
+    }
+
+    #[test]
+    fn permissions_are_scoped_independently() {
+        let conn = access_test_db();
+        set_mcp_enabled(&conn, true).unwrap();
+        conn.execute(
+            "INSERT INTO mcp_permissions (profile_id, read_access, site_manage, container_manage) VALUES (?1, 1, 0, 1)",
+            params!["profile-1"],
+        )
+        .unwrap();
+        assert!(mcp_enabled(&conn));
+        assert!(has_access(&conn, "profile-1", RequiredAccess::Read));
+        assert!(has_access(
+            &conn,
+            "profile-1",
+            RequiredAccess::ContainerManage
+        ));
+        assert!(!has_access(&conn, "profile-1", RequiredAccess::SiteManage));
     }
 }
