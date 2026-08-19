@@ -187,6 +187,14 @@ impl SshManager {
             .ok_or_else(|| "Session not found".to_string())
     }
 
+    pub fn find_session_id(&self, host: &str, port: u16, username: &str) -> Option<String> {
+        self.sessions.read().unwrap().iter().find_map(|(id, session)| {
+            let info = &session.connect_info;
+            (info.host == host && info.port == port && info.username == username)
+                .then(|| id.clone())
+        })
+    }
+
     pub fn get_host(&self, session_id: &str) -> Option<String> {
         self.sessions.read().unwrap()
             .get(session_id)

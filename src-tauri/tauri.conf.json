@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "LeePanel",
-  "version": "1.0.22",
+  "version": "1.0.23",
   "identifier": "com.leepanel.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -27,6 +27,15 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "resources/register_leepanel_mcp.ps1",
+      "resources/unregister_leepanel_mcp.ps1"
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "./windows/hooks.nsh"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

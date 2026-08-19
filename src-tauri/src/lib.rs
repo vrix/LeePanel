@@ -1,5 +1,6 @@
 mod config;
 mod db;
+mod mcp;
 mod server;
 mod ssh;
 mod tunnel;
@@ -43,6 +44,9 @@ pub fn run() {
             // Initialize SQLite database
             let db = db::init_db().expect("Failed to initialize database");
             app.manage(db);
+
+            mcp::start_broker(app.handle().clone());
+            mcp::register_with_codex(app.handle());
 
             Ok(())
         })
@@ -140,4 +144,12 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+pub fn run_mcp() {
+    mcp::run_stdio();
+}
+
+pub fn mcp_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
 }

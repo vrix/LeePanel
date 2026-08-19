@@ -94,14 +94,15 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "LeePanel ${{ github.ref_name }}"
           releaseBody: |
-            ## v1.0.22 更新说明
+            ## v1.0.23 更新说明
 
-            - 新增 Docker 与 Podman 运行时自动识别及统一管理。
-            - 新增 Podman 容器、镜像和 Compose 操作支持。
-            - 修复仅安装 rootless Podman 时误报 Docker 不可用的问题。
-            - 优化容器运行时状态、错误提示和多语言界面。
-            - 更新独立升级源至 vrix/LeePanel，并启用发布包签名校验。
-            - 版本号更新至 `v1.0.22`。
+            - 新增 LeePanel MCP，可由 ChatGPT/Codex 查询服务器和站点状态。
+            - 新增 Nginx 检查、核心服务状态、Docker/Podman 状态、容器与镜像列表及受限容器日志等只读 MCP 工具。
+            - 新增受控的站点启用与停用工具，不开放删除、安装和服务器重启等高风险操作。
+            - 新增仅监听本机并使用随机令牌认证的 AI Broker，MCP 不直接读取 SSH 密码或私钥。
+            - 新增 MyTerm 风格的 MCP 自动注册、升级更新、失败回滚和卸载清理流程。
+            - 修正讨论功能链接，统一指向 vrix/LeePanel。
+            - 版本号更新至 `v1.0.23`。
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}
