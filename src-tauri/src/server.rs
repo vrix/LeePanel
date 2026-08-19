@@ -4415,6 +4415,14 @@ else
   echo "DOCKER_INSTALLED=0"
 fi
 
+# Check Podman (daemonless, so no systemd service state is required)
+if command -v podman &>/dev/null; then
+  echo "PODMAN_INSTALLED=1"
+  echo "PODMAN_VERSION=$(podman -v 2>/dev/null | grep -oP '[\d]+\.[\d]+\.[\d]+' | head -1 || echo '')"
+else
+  echo "PODMAN_INSTALLED=0"
+fi
+
 # Check PostgreSQL
 # Check for PostgreSQL server specifically (not just psql client)
 # Use server binary + package state as primary checks; systemctl as fallback
@@ -4600,6 +4608,17 @@ fi
         version: get("DOCKER_VERSION"),
         service_name: "docker".to_string(),
         running: get("DOCKER_RUNNING") == "active",
+    });
+
+    // Podman is daemonless; an empty service name keeps service controls hidden.
+    list.push(SoftwareInfo {
+        name: "podman".to_string(),
+        display_name: "Podman".to_string(),
+        category: "container".to_string(),
+        installed: get("PODMAN_INSTALLED") == "1",
+        version: get("PODMAN_VERSION"),
+        service_name: String::new(),
+        running: false,
     });
 
     // PostgreSQL
@@ -5877,6 +5896,12 @@ fi
 echo "ACTION_SUCCESS"
 "#, action, action, install_cmd);
         }
+        "podman" => (
+            "podman",
+            "",
+            "",
+            "",
+        ),
         "zip" => (
             "zip",
             "zip",
@@ -6919,6 +6944,7 @@ pub async fn read_site_log(
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DockerStatus {
     pub installed: bool,
+    pub runtime: String,
     pub version: String,
     pub compose_version: String,
     pub running: bool,
@@ -6952,39 +6978,27 @@ pub struct DockerImage {
     pub created: String,
 }
 
-/// Check Docker installation status
-pub async fn check_docker(
-    session: &SshSession,
-    _cache: &SshCache,
-    _session_id: &str,
-) -> Result<DockerStatus, String> {
-    // ponytail: no cache — always real-time check since systemctl is-active is fast
-    let (stdout, _, _) = crate::ssh::session_exec_with_output(session,
-            r#"
-if command -v docker &>/dev/null; then
-    echo "INSTALLED=true"
-    echo "VERSION=$(docker --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-    echo "RUNNING=$(systemctl is-active docker 2>/dev/null || echo false)"
-else
-    echo "INSTALLED=false"
-    echo "VERSION="
-    echo "RUNNING=false"
-fi
+async fn container_runtime(session: &SshSession) -> Result<String, String> {
+    let (stdout, _, _) = crate::ssh::session_exec_with_output(
+        session,
+        container_runtime_selection_command(),
+        10,
+    )
+    .await?;
+    match stdout.trim() {
+        "docker" | "podman" => Ok(stdout.trim().to_string()),
+        _ => Err("Neither Docker nor Podman is installed".to_string()),
+    }
+}
 
-if command -v docker-compose &>/dev/null; then
-    echo "COMPOSE=$(docker-compose --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-elif docker compose version &>/dev/null 2>&1; then
-    echo "COMPOSE=$(docker compose version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-else
-    echo "COMPOSE="
-fi
-"#,
-            15,
-        )
-        .await?;
+fn container_runtime_selection_command() -> &'static str {
+    "if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then echo docker; elif command -v podman >/dev/null 2>&1; then echo podman; elif command -v docker >/dev/null 2>&1; then echo docker; fi"
+}
 
+fn parse_container_status(stdout: &str) -> DockerStatus {
     let mut status = DockerStatus {
         installed: false,
+        runtime: String::new(),
         version: String::new(),
         compose_version: String::new(),
         running: false,
@@ -6992,7 +7006,9 @@ fi
 
     for line in stdout.lines() {
         let line = line.trim();
-        if let Some(v) = line.strip_prefix("INSTALLED=") {
+        if let Some(v) = line.strip_prefix("RUNTIME=") {
+            status.runtime = v.to_string();
+        } else if let Some(v) = line.strip_prefix("INSTALLED=") {
             status.installed = v == "true";
         } else if let Some(v) = line.strip_prefix("VERSION=") {
             status.version = v.to_string();
@@ -7003,7 +7019,156 @@ fi
         }
     }
 
-    Ok(status)
+    status
+}
+
+fn container_status_command() -> &'static str {
+    r#"
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    RUNTIME=docker
+elif command -v podman >/dev/null 2>&1; then
+    RUNTIME=podman
+elif command -v docker >/dev/null 2>&1; then
+    RUNTIME=docker
+else
+    RUNTIME=
+fi
+
+echo "RUNTIME=$RUNTIME"
+if [ -n "$RUNTIME" ]; then
+    echo "INSTALLED=true"
+    echo "VERSION=$($RUNTIME --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    if [ "$RUNTIME" = podman ]; then
+        # Podman is daemonless. A non-interactive SSH session may make `podman info`
+        # fail even though the installed CLI is ready for container operations.
+        echo "RUNNING=active"
+    elif docker info >/dev/null 2>&1; then
+        echo "RUNNING=active"
+    else
+        echo "RUNNING=inactive"
+    fi
+else
+    echo "INSTALLED=false"
+    echo "VERSION="
+    echo "RUNNING=inactive"
+fi
+
+if [ "$RUNTIME" = docker ] && command -v docker-compose >/dev/null 2>&1; then
+    echo "COMPOSE=$(docker-compose --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+elif [ "$RUNTIME" = podman ] && command -v podman-compose >/dev/null 2>&1; then
+    echo "COMPOSE=$(podman-compose --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+elif [ -n "$RUNTIME" ] && $RUNTIME compose version >/dev/null 2>&1; then
+    echo "COMPOSE=$($RUNTIME compose version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+else
+    echo "COMPOSE="
+fi
+"#
+}
+
+fn container_commit_command(runtime: &str, container_id: &str, image: &str, message: &str) -> String {
+    if message.is_empty() {
+        return format!("{} commit {} {}", runtime, container_id, image);
+    }
+    let safe_msg = message.replace('"', "\\\"");
+    let format_arg = if runtime == "podman" { "--format docker " } else { "" };
+    format!(
+        "{} commit {}-m \"{}\" {} {}",
+        runtime, format_arg, safe_msg, container_id, image
+    )
+}
+
+/// Check Docker or Podman installation status. Docker remains the default when both exist.
+pub async fn check_docker(
+    session: &SshSession,
+    _cache: &SshCache,
+    _session_id: &str,
+) -> Result<DockerStatus, String> {
+    // ponytail: no cache — always real-time check since systemctl is-active is fast
+    let (stdout, _, _) = crate::ssh::session_exec_with_output(session,
+            container_status_command(),
+            15,
+        )
+        .await?;
+
+    Ok(parse_container_status(&stdout))
+}
+
+#[cfg(test)]
+mod container_runtime_tests {
+    use super::{build_software_script, parse_container_status, OsInfo};
+
+    #[test]
+    fn parses_docker_status() {
+        let status = parse_container_status(
+            "RUNTIME=docker\nINSTALLED=true\nVERSION=27.5.1\nRUNNING=active\nCOMPOSE=2.32.4",
+        );
+        assert!(status.installed && status.running);
+        assert_eq!(status.runtime, "docker");
+        assert_eq!(status.version, "27.5.1");
+        assert_eq!(status.compose_version, "2.32.4");
+    }
+
+    #[test]
+    fn parses_podman_status() {
+        let status = parse_container_status(
+            "RUNTIME=podman\nINSTALLED=true\nVERSION=5.4.0\nRUNNING=active\nCOMPOSE=1.3.0",
+        );
+        assert!(status.installed && status.running);
+        assert_eq!(status.runtime, "podman");
+        assert_eq!(status.version, "5.4.0");
+    }
+
+    #[test]
+    fn parses_missing_runtime() {
+        let status = parse_container_status(
+            "RUNTIME=\nINSTALLED=false\nVERSION=\nRUNNING=inactive\nCOMPOSE=",
+        );
+        assert!(!status.installed && !status.running);
+        assert!(status.runtime.is_empty());
+    }
+
+    #[test]
+    fn podman_commit_message_uses_docker_format() {
+        let command = super::container_commit_command("podman", "abc123", "demo:latest", "snapshot");
+        assert_eq!(
+            command,
+            "podman commit --format docker -m \"snapshot\" abc123 demo:latest"
+        );
+    }
+
+    #[test]
+    fn podman_software_script_uses_system_package_without_service() {
+        let os = OsInfo {
+            distro: "Ubuntu".into(),
+            version: "24.04".into(),
+            codename: "noble".into(),
+            family: "debian".into(),
+            kernel: String::new(),
+            arch: "x86_64".into(),
+            hostname: String::new(),
+        };
+        let script = build_software_script(&os, "podman", "install", "", true);
+        assert!(script.contains("apt-get install -y podman"));
+        assert!(!script.contains("systemctl enable podman"));
+    }
+
+    #[test]
+    fn podman_status_does_not_require_daemon_info() {
+        let script = super::container_status_command();
+        assert!(script.contains("if [ \"$RUNTIME\" = podman ]; then"));
+        assert!(script.contains("echo \"RUNNING=active\""));
+        assert!(!script.contains("$RUNTIME info"));
+    }
+
+    #[test]
+    fn runtime_selection_falls_back_to_podman_when_docker_daemon_is_unavailable() {
+        let script = super::container_runtime_selection_command();
+        let docker_ready = script.find("docker info").unwrap();
+        let podman = script.find("echo podman").unwrap();
+        let stopped_docker = script.rfind("echo docker").unwrap();
+        assert!(docker_ready < podman && podman < stopped_docker);
+    }
+
 }
 
 /// Helper: run an SSH command with streaming output via Tauri events
@@ -7254,8 +7419,9 @@ pub async fn docker_container_list(
     _cache: &SshCache,
     _session_id: &str,
 ) -> Result<Vec<DockerContainer>, String> {
-    let cmd = r#"docker ps -a --format '{{.ID}}|||{{.Names}}|||{{.Image}}|||{{.Status}}|||{{.State}}|||{{.Ports}}|||{{.CreatedAt}}'"#;
-    let (stdout, stderr, code) = crate::ssh::session_exec_with_output(session, cmd, 30).await?;
+    let runtime = container_runtime(session).await?;
+    let cmd = format!(r#"{} ps -a --format '{{{{.ID}}}}|||{{{{.Names}}}}|||{{{{.Image}}}}|||{{{{.Status}}}}|||{{{{.State}}}}|||{{{{.Ports}}}}|||{{{{.CreatedAt}}}}'"#, runtime);
+    let (stdout, stderr, code) = crate::ssh::session_exec_with_output(session, &cmd, 30).await?;
 
     let mut containers = Vec::new();
     for line in stdout.lines() {
@@ -7307,7 +7473,8 @@ pub async fn docker_container_action(
     }
 
     let safe_id = container_id.chars().filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_').collect::<String>();
-    let cmd = format!("docker {} {}", action, safe_id);
+    let runtime = container_runtime(session).await?;
+    let cmd = format!("{} {} {}", runtime, action, safe_id);
     let (stdout, stderr, code) = crate::ssh::session_exec_with_output(session, &cmd, 30).await?;
     // ponytail: exit_code -1 means ExitStatus not received (russh behavior)
     if code > 0 {
@@ -7335,10 +7502,11 @@ pub async fn docker_container_remove(
     force: bool,
 ) -> Result<String, String> {
     let safe_id = container_id.chars().filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_').collect::<String>();
+    let runtime = container_runtime(session).await?;
     let cmd = if force {
-        format!("docker rm -f {}", safe_id)
+        format!("{} rm -f {}", runtime, safe_id)
     } else {
-        format!("docker rm {}", safe_id)
+        format!("{} rm {}", runtime, safe_id)
     };
     let (stdout, stderr, code) = crate::ssh::session_exec_with_output(session, &cmd, 30).await?;
     // ponytail: exit_code -1 means ExitStatus not received (russh behavior)
@@ -7371,13 +7539,14 @@ pub async fn docker_container_batch_action(
     }
 
     let mut results = Vec::with_capacity(container_ids.len());
+    let runtime = container_runtime(session).await?;
     for id in container_ids {
         let safe_id = id.chars().filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_').collect::<String>();
         if safe_id.is_empty() {
             results.push(DockerBatchResult { id, ok: false, message: "Invalid container id".into() });
             continue;
         }
-        let cmd = format!("docker {} {}", action, safe_id);
+        let cmd = format!("{} {} {}", runtime, action, safe_id);
         let (stdout, stderr, code) = crate::ssh::session_exec_with_output(session, &cmd, 30).await?;
         if code > 0 {
             let err = if !stderr.trim().is_empty() {
@@ -7404,6 +7573,7 @@ pub async fn docker_container_batch_remove(
     force: bool,
 ) -> Result<Vec<DockerBatchResult>, String> {
     let mut results = Vec::with_capacity(container_ids.len());
+    let runtime = container_runtime(session).await?;
     for id in container_ids {
         let safe_id = id.chars().filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_').collect::<String>();
         if safe_id.is_empty() {
@@ -7411,9 +7581,9 @@ pub async fn docker_container_batch_remove(
             continue;
         }
         let cmd = if force {
-            format!("docker rm -f {}", safe_id)
+            format!("{} rm -f {}", runtime, safe_id)
         } else {
-            format!("docker rm {}", safe_id)
+            format!("{} rm {}", runtime, safe_id)
         };
         let (stdout, stderr, code) = crate::ssh::session_exec_with_output(session, &cmd, 30).await?;
         if code > 0 {
@@ -7445,6 +7615,7 @@ pub async fn docker_container_commit(
     export_expose: &str,
     app_handle: &AppHandle,
 ) -> Result<String, String> {
+    let runtime = container_runtime(session).await?;
     let safe_id = container_id.chars().filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_').collect::<String>();
     // ponytail: sanitize image name — allow [a-z0-9._/:-]
     let safe_image: String = image_name.chars().filter(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '/' | ':' | '-')).collect();
@@ -7468,25 +7639,20 @@ pub async fn docker_container_commit(
                 }
             }
             let cmd = format!(
-                "echo '[export] Exporting container...'; docker export {} | docker import {} - {}",
-                safe_id, changes.trim(), safe_image
+                "echo '[export] Exporting container...'; {} export {} | {} import {} - {}",
+                runtime, safe_id, runtime, changes.trim(), safe_image
             );
             docker_stream_exec(session, cache, session_id, &cmd, 300, app_handle).await?;
             Ok(format!("Container exported as {}", safe_image))
         }
         "clean" => {
             let clean_cmd = format!(
-                "docker exec {} sh -c 'echo \"[clean] Clearing package cache...\"; apt-get clean 2>/dev/null; yum clean all 2>/dev/null; rm -rf /var/cache/apt/archives/* /var/cache/yum/* /tmp/* /var/tmp/* /var/log/*.log /var/log/*.gz 2>/dev/null; echo \"[clean] Done.\"'",
-                safe_id
+                "{} exec {} sh -c 'echo \"[clean] Clearing package cache...\"; apt-get clean 2>/dev/null; yum clean all 2>/dev/null; rm -rf /var/cache/apt/archives/* /var/cache/yum/* /tmp/* /var/tmp/* /var/log/*.log /var/log/*.gz 2>/dev/null; echo \"[clean] Done.\"'",
+                runtime, safe_id
             );
             docker_stream_exec(session, cache, session_id, &clean_cmd, 120, app_handle).await?;
 
-            let cmd = if message.is_empty() {
-                format!("docker commit {} {}", safe_id, safe_image)
-            } else {
-                let safe_msg = message.replace('"', "\\\"");
-                format!("docker commit -m \"{}\" {} {}", safe_msg, safe_id, safe_image)
-            };
+            let cmd = container_commit_command(&runtime, &safe_id, &safe_image, message);
             let (stdout, stderr, code) = crate::ssh::session_exec_with_output(session, &cmd, 120).await?;
             if code > 0 {
                 let err = if !stderr.trim().is_empty() { stderr.trim().to_string() } else if !stdout.trim().is_empty() { stdout.trim().to_string() } else { format!("Command failed with exit code {}", code) };
@@ -7496,12 +7662,7 @@ pub async fn docker_container_commit(
         }
         _ => {
             // direct mode
-            let cmd = if message.is_empty() {
-                format!("docker commit {} {}", safe_id, safe_image)
-            } else {
-                let safe_msg = message.replace('"', "\\\"");
-                format!("docker commit -m \"{}\" {} {}", safe_msg, safe_id, safe_image)
-            };
+            let cmd = container_commit_command(&runtime, &safe_id, &safe_image, message);
             let (stdout, stderr, code) = crate::ssh::session_exec_with_output(session, &cmd, 120).await?;
             if code > 0 {
                 let err = if !stderr.trim().is_empty() { stderr.trim().to_string() } else if !stdout.trim().is_empty() { stdout.trim().to_string() } else { format!("Command failed with exit code {}", code) };
@@ -7521,7 +7682,8 @@ pub async fn docker_container_logs(
     lines: usize,
 ) -> Result<String, String> {
     let safe_id = container_id.chars().filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_').collect::<String>();
-    let cmd = format!("docker logs --tail {} {} 2>&1", lines.min(5000), safe_id);
+    let runtime = container_runtime(session).await?;
+    let cmd = format!("{} logs --tail {} {} 2>&1", runtime, lines.min(5000), safe_id);
     let (stdout, stderr, code) = crate::ssh::session_exec_with_output(session, &cmd, 30).await?;
     if code != 0 {
         return Err(format!(
@@ -7538,8 +7700,9 @@ pub async fn docker_image_list(
     _cache: &SshCache,
     _session_id: &str,
 ) -> Result<Vec<DockerImage>, String> {
-    let cmd = r#"docker images --format '{{.ID}}|||{{.Repository}}|||{{.Tag}}|||{{.Size}}|||{{.CreatedAt}}'"#;
-    let (stdout, stderr, code) = crate::ssh::session_exec_with_output(session, cmd, 30).await?;
+    let runtime = container_runtime(session).await?;
+    let cmd = format!(r#"{} images --format '{{{{.ID}}}}|||{{{{.Repository}}}}|||{{{{.Tag}}}}|||{{{{.Size}}}}|||{{{{.CreatedAt}}}}'"#, runtime);
+    let (stdout, stderr, code) = crate::ssh::session_exec_with_output(session, &cmd, 30).await?;
 
     let mut images = Vec::new();
     for line in stdout.lines() {
@@ -7588,9 +7751,10 @@ pub async fn docker_image_pull(
         return Err("Invalid image name".to_string());
     }
 
-    // ponytail: Docker requires lowercase repository names, auto-convert to avoid user error
+    // Docker and Podman require lowercase repository names.
     let image_name_lower = image_name.to_lowercase();
-    let cmd = format!("docker pull {}", image_name_lower);
+    let runtime = container_runtime(session).await?;
+    let cmd = format!("{} pull {}", runtime, image_name_lower);
     let output = docker_stream_exec(session, cache, session_id, &cmd, 600, app_handle).await
         .map_err(|e| format!("Failed to pull image: {}", e))?;
 
@@ -7611,7 +7775,8 @@ pub async fn docker_image_remove(
     image_id: &str,
 ) -> Result<String, String> {
     let safe_id = image_id.chars().filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == ':' || *c == '/' || *c == '.').collect::<String>();
-    let cmd = format!("docker rmi {}", safe_id);
+    let runtime = container_runtime(session).await?;
+    let cmd = format!("{} rmi {}", runtime, safe_id);
     let (stdout, stderr, code) = crate::ssh::session_exec_with_output(session, &cmd, 30).await?;
     // ponytail: exit_code -1 means ExitStatus not received (russh behavior)
     if code > 0 {
@@ -7640,7 +7805,8 @@ pub async fn docker_image_load(
     if safe_path.is_empty() || !safe_path.starts_with('/') {
         return Err("Invalid file path".to_string());
     }
-    let cmd = format!("docker load -i {}", safe_path);
+    let runtime = container_runtime(session).await?;
+    let cmd = format!("{} load -i {}", runtime, safe_path);
     docker_stream_exec(session, cache, session_id, &cmd, 600, app_handle).await?;
     Ok(format!("Image loaded from {}", safe_path))
 }
@@ -7667,11 +7833,11 @@ pub async fn docker_image_run(
     // ponytail: auto-lowercase for consistency with pull
     let image_lower = image_name.to_lowercase();
     
-    // Build command: docker run {args} {image}
+    let runtime = container_runtime(session).await?;
     let cmd = if run_args.trim().is_empty() {
-        format!("docker run -d {}", image_lower)
+        format!("{} run -d {}", runtime, image_lower)
     } else {
-        format!("docker run {} {}", run_args.trim(), image_lower)
+        format!("{} run {} {}", runtime, run_args.trim(), image_lower)
     };
 
     let output = docker_stream_exec(session, cache, session_id, &cmd, 600, app_handle).await
@@ -7692,8 +7858,13 @@ pub async fn docker_get_mirror_config(
     _cache: &SshCache,
     _session_id: &str,
 ) -> Result<Vec<String>, String> {
-    let cmd = r#"cat /etc/docker/daemon.json 2>/dev/null | python3 -c "import sys,json;d=json.load(sys.stdin);print('\n'.join(d.get('registry-mirrors',[])))" 2>/dev/null || echo """#;
-    let (stdout, _, _) = crate::ssh::session_exec_with_output(session, cmd, 10).await?;
+    let runtime = container_runtime(session).await?;
+    let cmd = if runtime == "docker" {
+        r#"cat /etc/docker/daemon.json 2>/dev/null | python3 -c "import sys,json;d=json.load(sys.stdin);print('\n'.join(d.get('registry-mirrors',[])))" 2>/dev/null || echo """#.to_string()
+    } else {
+        r#"sed -n '/^\[\[registry\.mirror\]\]/{n;s/^[[:space:]]*location[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p;}' /etc/containers/registries.conf.d/leepanel-mirrors.conf 2>/dev/null || true"#.to_string()
+    };
+    let (stdout, _, _) = crate::ssh::session_exec_with_output(session, &cmd, 10).await?;
     let mirrors: Vec<String> = stdout
         .lines()
         .map(|l| l.trim().to_string())
@@ -7709,11 +7880,20 @@ pub async fn docker_set_mirror_config(
     _session_id: &str,
     mirrors: &[String],
 ) -> Result<String, String> {
-    // Build JSON for daemon.json
-    let mirrors_json: Vec<String> = mirrors.iter().map(|m| format!("\"{}\"" , m)).collect();
-    let mirrors_array = mirrors_json.join(",");
+    let runtime = container_runtime(session).await?;
+    let safe_mirrors: Vec<String> = mirrors
+        .iter()
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty())
+        .collect();
+    if safe_mirrors.iter().any(|m| !m.chars().all(|c| c.is_alphanumeric() || matches!(c, ':' | '/' | '.' | '-' | '_'))) {
+        return Err("Invalid registry mirror URL".to_string());
+    }
 
-    let script = format!(r#"
+    let script = if runtime == "docker" {
+        let mirrors_json: Vec<String> = safe_mirrors.iter().map(|m| format!("\"{}\"", m)).collect();
+        let mirrors_array = mirrors_json.join(",");
+        format!(r#"
 mkdir -p /etc/docker
 cat > /etc/docker/daemon.json << 'DAEMON_EOF'
 {{
@@ -7723,7 +7903,28 @@ DAEMON_EOF
 systemctl daemon-reload
 systemctl restart docker
 echo "Docker mirror configured: {mirrors}"
-"#, mirrors = mirrors_array);
+"#, mirrors = mirrors_array)
+    } else {
+        let entries = safe_mirrors
+            .iter()
+            .map(|m| m.strip_prefix("https://").or_else(|| m.strip_prefix("http://")).unwrap_or(m))
+            .map(|m| format!("[[registry.mirror]]\nlocation = \"{}\"", m))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        format!(r#"
+mkdir -p /etc/containers/registries.conf.d
+cat > /etc/containers/registries.conf.d/leepanel-mirrors.conf << 'REGISTRY_EOF'
+# Managed by LeePanel
+[[registry]]
+prefix = "docker.io"
+location = "docker.io"
+
+{entries}
+REGISTRY_EOF
+podman info >/dev/null
+echo "Podman registry mirrors configured"
+"#, entries = entries)
+    };
 
     let (stdout, stderr, code) = crate::ssh::session_exec_with_output(session, &script, 30).await?;
     if code != 0 {
@@ -7732,7 +7933,11 @@ echo "Docker mirror configured: {mirrors}"
             if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() }
         ));
     }
-    Ok("Docker mirror configured successfully. Docker service restarted.".to_string())
+    if runtime == "docker" {
+        Ok("Docker mirror configured successfully. Docker service restarted.".to_string())
+    } else {
+        Ok("Podman registry mirrors configured successfully.".to_string())
+    }
 }
 
 // ===== Database Management =====

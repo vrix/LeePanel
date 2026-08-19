@@ -4,8 +4,8 @@
 
 <p align="center">
   <a href="https://github.com/gna1280072/LeePanel/stargazers"><img src="https://img.shields.io/github/stars/gna1280072/LeePanel?style=flat-square" alt="Stars"></a>
-  <a href="https://github.com/gna1280072/LeePanel/releases"><img src="https://img.shields.io/github/v/release/gna1280072/LeePanel?style=flat-square" alt="Release"></a>
-  <a href="https://github.com/gna1280072/LeePanel/releases"><img src="https://img.shields.io/github/downloads/gna1280072/LeePanel/total?style=flat-square" alt="Downloads"></a>
+  <a href="https://github.com/vrix/LeePanel/releases"><img src="https://img.shields.io/github/v/release/vrix/LeePanel?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/vrix/LeePanel/releases"><img src="https://img.shields.io/github/downloads/vrix/LeePanel/total?style=flat-square" alt="Downloads"></a>
   <a href="https://github.com/gna1280072/LeePanel/blob/main/LICENSE"><img src="https://img.shields.io/github/license/gna1280072/LeePanel?style=flat-square" alt="License"></a>
   <a href="https://linux.do"><img src="https://img.shields.io/badge/Linux%20DO-%E7%A4%BE%E5%8C%BA-30363D?style=flat-square&logo=linux" alt="Linux DO"></a>
 </p>
@@ -19,7 +19,7 @@
   <img src="https://img.shields.io/badge/Server-Ubuntu%20%7C%20Debian-E95420?style=flat-square&logo=ubuntu" alt="Server">
 </p>
 
-[English](README.md) | [📥 下载软件](https://github.com/gna1280072/LeePanel/releases)
+[English](README.md) | [📥 下载软件](https://github.com/vrix/LeePanel/releases)
 
 LeePanel — 免费开源，下一代 Linux 服务器管理面板软件。
 
@@ -73,12 +73,12 @@ LeePanel — 免费开源，下一代 Linux 服务器管理面板软件。
 
 | 平台 | 下载 |
 |------|------|
-| Windows | [下载 Windows 版](https://github.com/gna1280072/LeePanel/releases) |
-| macOS | [下载 macOS 版](https://github.com/gna1280072/LeePanel/releases) |
-| Linux | [下载 Linux 版](https://github.com/gna1280072/LeePanel/releases) |
+| Windows | [下载 Windows 版](https://github.com/vrix/LeePanel/releases) |
+| macOS | [下载 macOS 版](https://github.com/vrix/LeePanel/releases) |
+| Linux | [下载 Linux 版](https://github.com/vrix/LeePanel/releases) |
 
 <p align="center">
-  <a href="https://github.com/gna1280072/LeePanel/releases">
+  <a href="https://github.com/vrix/LeePanel/releases">
     <img src="https://img.shields.io/badge/下载-最新版本-2da44e?style=for-the-badge&logo=github" alt="下载最新版">
   </a>
 </p>
@@ -216,4 +216,3 @@ npm run tauri build
 ##  许可证
 
 MIT 许可证。详见 [LICENSE](LICENSE) 文件。
- 

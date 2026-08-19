@@ -146,7 +146,7 @@
     "port": "Portas",
     "bbr": "Aceleração BBR",
     "tunnel": "Túnel",
-    "docker": "Docker",
+    "docker": "Docker / Podman",
     "update": "Atualização",
     "settings": "Configurações",
     "discussions": "Discussões"
@@ -253,6 +253,12 @@
     }
   },
   "dockerPanel": {
+    "title": "Gerenciamento de contêineres (Docker / Podman)",
+    "checkingRuntime": "Verificando Docker / Podman...",
+    "mirrorDescRuntime": "Configure espelhos de registro do {{runtime}} para acelerar o download de imagens.",
+    "saveRuntimeConfig": "Salvar configuração do {{runtime}}",
+    "imageArchiveHint": "Aceita arquivos de imagem exportados com {{runtime}} save.",
+    "runArgsLabelRuntime": "Digite os argumentos de {{runtime}} run (sem o comando e o nome da imagem):",
     "selectAll": "Selecionar tudo",
     "selectedCount": "{{count}} selecionado(s)",
     "batchStart": "Iniciar",

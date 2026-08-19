@@ -6,6 +6,7 @@ import ServiceUnavailable from './ServiceUnavailable'
 
 interface DockerStatus {
   installed: boolean
+  runtime: 'docker' | 'podman' | ''
   version: string
   compose_version: string
   running: boolean
@@ -100,6 +101,7 @@ export default function DockerPanel({ sessionId, onNavigateToSoftware }: DockerP
   const [mirrorInput, setMirrorInput] = useState('')
   const [mirrorLoading, setMirrorLoading] = useState(false)
   const [mirrorSaving, setMirrorSaving] = useState(false)
+  const runtimeName = status?.runtime === 'podman' ? 'Podman' : status?.runtime === 'docker' ? 'Docker' : 'Docker / Podman'
 
   const fetchStatus = useCallback(async () => {
     if (!sessionId) return
@@ -476,7 +478,7 @@ export default function DockerPanel({ sessionId, onNavigateToSoftware }: DockerP
   return (
     <div className="docker-panel">
       <div className="docker-header">
-        <h2>Docker</h2>
+        <h2>{t('dockerPanel.title')}</h2>
         <button className="docker-refresh-btn" onClick={() => { fetchStatus(); if (status?.installed) { fetchContainers(); fetchImages() } }} disabled={statusLoading}>
           {statusLoading ? '...' : `↻ ${t('dockerPanel.refresh')}`}
         </button>
@@ -485,10 +487,10 @@ export default function DockerPanel({ sessionId, onNavigateToSoftware }: DockerP
       {error && <div className="docker-message docker-error">{error}</div>}
       {success && <div className="docker-message docker-success">{success}</div>}
 
-      {/* Docker Status Card */}
+      {/* Container runtime status card */}
       <div className="docker-status-card">
         {statusLoading && !status ? (
-          <div className="docker-status-loading">{t('dockerPanel.checking')}</div>
+          <div className="docker-status-loading">{t('dockerPanel.checkingRuntime')}</div>
         ) : status ? (
           <>
             {/* ponytail: only show status badge when running — ServiceUnavailable covers the rest */}
@@ -497,12 +499,12 @@ export default function DockerPanel({ sessionId, onNavigateToSoftware }: DockerP
                 <span className="docker-status-badge active">
                   {t('dockerPanel.running')}
                 </span>
-                <span className="docker-version">Docker {status.version || 'unknown'}</span>
+                <span className="docker-version">{runtimeName} {status.version || 'unknown'}</span>
                 {status.compose_version && <span className="docker-version">Compose {status.compose_version}</span>}
               </div>
             )}
             {(!status.installed || !status.running) && (
-              <ServiceUnavailable serviceName="Docker" onNavigate={onNavigateToSoftware} />
+              <ServiceUnavailable serviceName={runtimeName} onNavigate={status.runtime === 'podman' ? undefined : onNavigateToSoftware} />
             )}
           </>
         ) : null}
@@ -528,7 +530,7 @@ export default function DockerPanel({ sessionId, onNavigateToSoftware }: DockerP
         </div>
       )}
 
-      {/* Tabs - only show if Docker is installed */}
+      {/* Tabs - shown for either supported container runtime */}
       {status?.installed && (
         <>
           <div className="docker-tabs">
@@ -705,7 +707,7 @@ export default function DockerPanel({ sessionId, onNavigateToSoftware }: DockerP
               <div className="docker-mirror-section">
                 <div className="docker-mirror-header">
                   <h3>{t('dockerPanel.registryMirrors')}</h3>
-                  <p className="docker-mirror-desc">{t('dockerPanel.mirrorDesc')}</p>
+                  <p className="docker-mirror-desc">{t('dockerPanel.mirrorDescRuntime', { runtime: runtimeName })}</p>
                 </div>
 
                 {mirrorLoading ? (
@@ -737,7 +739,7 @@ export default function DockerPanel({ sessionId, onNavigateToSoftware }: DockerP
                       />
                       <div className="docker-mirror-actions">
                         <button className="docker-btn primary" onClick={handleSaveMirror} disabled={mirrorSaving || !mirrorInput.trim()}>
-                          {mirrorSaving ? t('dockerPanel.saving') : t('dockerPanel.saveRestart')}
+                          {mirrorSaving ? t('dockerPanel.saving') : t('dockerPanel.saveRuntimeConfig', { runtime: runtimeName })}
                         </button>
                         <button className="docker-btn" onClick={() => { setMirrorInput(mirrors.join('\n')) }}>
                           {t('dockerPanel.loadCurrent')}
@@ -1055,7 +1057,7 @@ export default function DockerPanel({ sessionId, onNavigateToSoftware }: DockerP
                 onKeyDown={(e) => { if (e.key === 'Enter' && loadImagePath.trim()) handleLoadImage() }}
                 autoFocus
               />
-              <p style={{ fontSize: '12px', opacity: 0.7, margin: '8px 0 0 0' }}>{t('dockerPanel.loadImageHint')}</p>
+              <p style={{ fontSize: '12px', opacity: 0.7, margin: '8px 0 0 0' }}>{t('dockerPanel.imageArchiveHint', { runtime: runtimeName.toLowerCase() })}</p>
             </div>
             <div className="docker-confirm-actions">
               <button className="docker-btn" onClick={() => setLoadImageModal(false)}>{t('dockerPanel.cancel')}</button>
@@ -1083,7 +1085,7 @@ export default function DockerPanel({ sessionId, onNavigateToSoftware }: DockerP
               {t('dockerPanel.runContainerTitle', { name: runImageModal.repository === '<none>' ? runImageModal.id.substring(0, 12) : `${runImageModal.repository}:${runImageModal.tag}` })}
             </div>
             <div className="docker-confirm-msg">
-              {t('dockerPanel.runArgsLabel')}
+              {t('dockerPanel.runArgsLabelRuntime', { runtime: runtimeName.toLowerCase() })}
             </div>
             <textarea
               className="docker-mirror-textarea"

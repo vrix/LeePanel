@@ -146,7 +146,7 @@
     "port": "連接埠",
     "bbr": "BBR 加速",
     "tunnel": "隧道",
-    "docker": "Docker",
+    "docker": "Docker / Podman",
     "update": "更新",
     "settings": "設定",
     "discussions": "討論"
@@ -260,6 +260,12 @@
     }
   },
   "dockerPanel": {
+    "title": "容器管理（Docker / Podman）",
+    "checkingRuntime": "正在偵測 Docker / Podman...",
+    "mirrorDescRuntime": "設定 {{runtime}} 登錄檔映像來源以加速映像拉取。",
+    "saveRuntimeConfig": "儲存 {{runtime}} 設定",
+    "imageArchiveHint": "支援透過 {{runtime}} save 匯出的映像封存檔。",
+    "runArgsLabelRuntime": "輸入 {{runtime}} run 參數（不包含命令和映像名稱）：",
     "selectAll": "全選",
     "selectedCount": "已選 {{count}} 個",
     "batchStart": "批次啟動",

@@ -146,7 +146,7 @@
     "port": "ポート",
     "bbr": "BBR 高速化",
     "tunnel": "トンネル",
-    "docker": "Docker",
+    "docker": "Docker / Podman",
     "update": "アップデート",
     "settings": "設定",
     "discussions": "ディスカッション"
@@ -253,6 +253,12 @@
     }
   },
   "dockerPanel": {
+    "title": "コンテナ管理（Docker / Podman）",
+    "checkingRuntime": "Docker / Podman を確認しています...",
+    "mirrorDescRuntime": "イメージ取得を高速化するため、{{runtime}} のレジストリミラーを設定します。",
+    "saveRuntimeConfig": "{{runtime}} の設定を保存",
+    "imageArchiveHint": "{{runtime}} save でエクスポートしたイメージアーカイブに対応しています。",
+    "runArgsLabelRuntime": "{{runtime}} run の引数を入力してください（コマンドとイメージ名を除く）：",
     "selectAll": "すべて選択",
     "selectedCount": "{{count}} 件選択中",
     "batchStart": "一括起動",

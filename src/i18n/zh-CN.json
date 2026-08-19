@@ -146,7 +146,7 @@
     "port": "端口",
     "tunnel": "隧道",
     "bbr": "BBR 加速",
-    "docker": "Docker",
+    "docker": "Docker / Podman",
     "update": "更新",
     "settings": "设置",
     "discussions": "讨论"
@@ -260,6 +260,12 @@
     }
   },
   "dockerPanel": {
+    "title": "容器管理（Docker / Podman）",
+    "checkingRuntime": "正在检测 Docker / Podman...",
+    "mirrorDescRuntime": "配置 {{runtime}} 注册表镜像源以加速镜像拉取。",
+    "saveRuntimeConfig": "保存 {{runtime}} 配置",
+    "imageArchiveHint": "支持通过 {{runtime}} save 导出的镜像归档文件。",
+    "runArgsLabelRuntime": "输入 {{runtime}} run 参数（不包含命令和镜像名）：",
     "selectAll": "全选",
     "selectedCount": "已选 {{count}} 个",
     "batchStart": "批量启动",

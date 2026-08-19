@@ -146,7 +146,7 @@
     "port": "Порты",
     "bbr": "Ускорение BBR",
     "tunnel": "Туннель",
-    "docker": "Docker",
+    "docker": "Docker / Podman",
     "update": "Обновление",
     "settings": "Настройки",
     "discussions": "Обсуждения"
@@ -253,6 +253,12 @@
     }
   },
   "dockerPanel": {
+    "title": "Управление контейнерами (Docker / Podman)",
+    "checkingRuntime": "Проверка Docker / Podman...",
+    "mirrorDescRuntime": "Настройте зеркала реестра {{runtime}}, чтобы ускорить загрузку образов.",
+    "saveRuntimeConfig": "Сохранить конфигурацию {{runtime}}",
+    "imageArchiveHint": "Поддерживаются архивы образов, экспортированные командой {{runtime}} save.",
+    "runArgsLabelRuntime": "Введите аргументы {{runtime}} run (без команды и имени образа):",
     "selectAll": "Выбрать все",
     "selectedCount": "Выбрано: {{count}}",
     "batchStart": "Запустить",

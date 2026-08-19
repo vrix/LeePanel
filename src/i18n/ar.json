@@ -146,7 +146,7 @@
     "port": "المنافذ",
     "bbr": "تسريع BBR",
     "tunnel": "النفق",
-    "docker": "Docker",
+    "docker": "Docker / Podman",
     "update": "تحديث",
     "settings": "الإعدادات",
     "discussions": "المناقشات"
@@ -253,6 +253,12 @@
     }
   },
   "dockerPanel": {
+    "title": "إدارة الحاويات (Docker / Podman)",
+    "checkingRuntime": "جارٍ التحقق من Docker / Podman...",
+    "mirrorDescRuntime": "تكوين مرايا سجل {{runtime}} لتسريع سحب الصور.",
+    "saveRuntimeConfig": "حفظ إعدادات {{runtime}}",
+    "imageArchiveHint": "يدعم ملفات الصور المصدّرة بواسطة {{runtime}} save.",
+    "runArgsLabelRuntime": "أدخل وسائط {{runtime}} run (من دون الأمر واسم الصورة):",
     "selectAll": "تحديد الكل",
     "selectedCount": "تم تحديد {{count}}",
     "batchStart": "بدء التشغيل",

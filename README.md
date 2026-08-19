@@ -4,8 +4,8 @@
 
 <p align="center">
   <a href="https://github.com/gna1280072/LeePanel/stargazers"><img src="https://img.shields.io/github/stars/gna1280072/LeePanel?style=flat-square" alt="Stars"></a>
-  <a href="https://github.com/gna1280072/LeePanel/releases"><img src="https://img.shields.io/github/v/release/gna1280072/LeePanel?style=flat-square" alt="Release"></a>
-  <a href="https://github.com/gna1280072/LeePanel/releases"><img src="https://img.shields.io/github/downloads/gna1280072/LeePanel/total?style=flat-square" alt="Downloads"></a>
+  <a href="https://github.com/vrix/LeePanel/releases"><img src="https://img.shields.io/github/v/release/vrix/LeePanel?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/vrix/LeePanel/releases"><img src="https://img.shields.io/github/downloads/vrix/LeePanel/total?style=flat-square" alt="Downloads"></a>
   <a href="https://github.com/gna1280072/LeePanel/blob/main/LICENSE"><img src="https://img.shields.io/github/license/gna1280072/LeePanel?style=flat-square" alt="License"></a>
   <a href="https://linux.do"><img src="https://img.shields.io/badge/Linux%20DO-Community-30363D?style=flat-square&logo=linux" alt="Linux DO"></a>
 </p>
@@ -19,7 +19,7 @@
   <img src="https://img.shields.io/badge/Server-Ubuntu%20%7C%20Debian-E95420?style=flat-square&logo=ubuntu" alt="Server">
 </p>
 
-[中文文档](README.zh-CN.md) | [ Download](https://github.com/gna1280072/LeePanel/releases)
+[中文文档](README.zh-CN.md) | [ Download](https://github.com/vrix/LeePanel/releases)
 
 LeePanel — Free and open-source, the next-generation Linux server management panel.
 
@@ -75,12 +75,12 @@ If you have any suggestions or feedback, feel free to share them in [GitHub Disc
 
 | Platform | Download |
 |----------|----------|
-| Windows  | [Download for Windows](https://github.com/gna1280072/LeePanel/releases) |
-| macOS    | [Download for macOS](https://github.com/gna1280072/LeePanel/releases) |
-| Linux    | [Download for Linux](https://github.com/gna1280072/LeePanel/releases) |
+| Windows  | [Download for Windows](https://github.com/vrix/LeePanel/releases) |
+| macOS    | [Download for macOS](https://github.com/vrix/LeePanel/releases) |
+| Linux    | [Download for Linux](https://github.com/vrix/LeePanel/releases) |
 
 <p align="center">
-  <a href="https://github.com/gna1280072/LeePanel/releases">
+  <a href="https://github.com/vrix/LeePanel/releases">
     <img src="https://img.shields.io/badge/Download-Latest%20Version-2da44e?style=for-the-badge&logo=github" alt="Download Latest">
   </a>
 </p>
