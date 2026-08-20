@@ -1,23 +1,23 @@
 {
-  "version": "1.0.25",
-  "notes": "LeePanel v1.0.25",
-  "pub_date": "2026-08-20T01:57:46Z",
+  "version": "1.0.26",
+  "notes": "LeePanel v1.0.26",
+  "pub_date": "2026-08-20T05:04:33Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSZWwwT0VMYnhGZThuSW1SbitNdE51bmpYUlRTaUlwcjBhcTVHYlJlbE01TWR5c21rUDdpbzA0RHpYTDM1d3J1RjRHUEZTeTFsNERSaDA2RjdSOEh6VjhJdTZXd240N3dZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MTkwOTgzCWZpbGU6TGVlUGFuZWxfMS4wLjI1X3g2NC1zZXR1cC5leGUKanZWUmlCZEtLODNQTy9hVGhRbVpRRWNPVWx6Z09Rd0U1SWVPZzJHR2RzaUVLOGlBOFl5aGlqRUhGZGV2NEY2Uml3Mi9OL3hrNzFYb2d3RmJPbDBFQUE9PQo=",
-      "url": "https://github.com/vrix/LeePanel/releases/download/v1.0.25/LeePanel_1.0.25_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSZWwwT0VMYnhGZTAvM1MvMU9jQjVrbDhkWkhEZHE1ZFNSOWdWWmN2Zml1NGVkUDNHSXA2M3NVODZQMjhRa3I1ei8xNFpBOHFjYzdVa2Q0bGRZcWt3M204VFVjNWZsMmcwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MjAyMjAwCWZpbGU6TGVlUGFuZWxfMS4wLjI2X3g2NC1zZXR1cC5leGUKcXVoRjROWlhxSkZWd0pkWUxXUWpHRVlpUVErS1BBSzdhb0ZMN29LUGtnTE5yVWlTM25kb3o3NnQzdEQ0YjlRaE1lOE1mM3ppbXNEdnNZazg2dmlXRFE9PQo=",
+      "url": "https://github.com/vrix/LeePanel/releases/download/v1.0.26/LeePanel_1.0.26_x64-setup.exe"
     },
     "darwin-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSZWwwT0VMYnhGZTVrM0RBcE5RcFJ5VjErL1BrYjVwM2UvRDJaMHBiWW9IUVJ4c1pyN2xDU1M5enBLVWZWWXFSQmtnTGdxS2Jxdmczbm8yZWZaSndBSVRCVzdNTlhQZndNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MTkwNzI5CWZpbGU6TGVlUGFuZWwuYXBwLnRhci5negpZZzBSeC95RjJWMlBFS1JKR0xPQzZJaURVRFhuV0RQRnVnQVpZZVFWTUQ5VU1mVmxuQ0pHVzJWV3dGeFI2KytSenBCM2UxUmVicEtQbUdVb1dhYkZDQT09Cg==",
-      "url": "https://github.com/vrix/LeePanel/releases/download/v1.0.25/LeePanel_x64.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSZWwwT0VMYnhGZS9Vd2pQb2g4RzNvNWovSGQ3UnYyZ0xPUmoxeUxMYXdLR1JSRWlSLzliTEdrSnh2cU8xaXZQR2xkQXZrNVhoeENRR0lNQ1IzRlVvd1MxYko0anZ5VkFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MjAxODI0CWZpbGU6TGVlUGFuZWwuYXBwLnRhci5negpiQlpIeHg1M3NrUjlJVDllUWlnRFB3cHJaaTZwRHBnWEJyeWVmMitHR0dwejIxQXI1S1BNanc5LzNjVE5PMUhkK0ZJNmh1SmwwcFRTanAxS1dXS3dEdz09Cg==",
+      "url": "https://github.com/vrix/LeePanel/releases/download/v1.0.26/LeePanel_x64.app.tar.gz"
     },
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSZWwwT0VMYnhGZTFzWGxRMFNVUnRsT1RGRGxLNm1hZHZUalUvWnBPQTl2NlJVTFNndzI0dFdyNmllNmtSYXZWak9hWXNFT3EvZXR2bC9wejlLaXNOLzFpczZsdGJMOWdNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MTkwNjE1CWZpbGU6TGVlUGFuZWwuYXBwLnRhci5negpTOExKYjBPVXVoRzNHMXRnaFJLblZHejZteFpQelZjclk5SUNMR0VubmN2SjE0QmpyaFZNY1ROOHBiZUxXL3AweTRKRzRhY3UvcHd4TVhvR1NaSWlCZz09Cg==",
-      "url": "https://github.com/vrix/LeePanel/releases/download/v1.0.25/LeePanel_aarch64.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSZWwwT0VMYnhGZTNVU0JYTzhrNHc0MVplcUo1aUF5VEJHNnRMWG1oSHhKcGd1NEkwUHhPbXJmZCtMcEFrVzlTcDhoOEd1dTcrTy9BYmtDMGo4Y3g1UFB1S0NKa2ltWmdrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MjAxODA1CWZpbGU6TGVlUGFuZWwuYXBwLnRhci5nego4K3IyOUdBOW1XZmlmVVkzWmc1UGxzTCszQ3BwTjhHQUZjUVFVem9BTk5ud1djdXRjVFhGdCtJaTQ2alVZU2NBUmRzN0xxZHFBWjFZZFB6emUrbUJEUT09Cg==",
+      "url": "https://github.com/vrix/LeePanel/releases/download/v1.0.26/LeePanel_aarch64.app.tar.gz"
     },
     "linux-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSZWwwT0VMYnhGZTk5T2pMdmxFUXozSUFmNVNqNy9kZWhRNkJ4NnFaWXZtNGdCazRqY2JMMVVUditRNThMZUtYUjdjaG9FTnY2WTk1OWVmT2JCbFpTR3BUblplWDNNRndZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MTkwODE4CWZpbGU6TGVlUGFuZWxfMS4wLjI1X2FtZDY0LkFwcEltYWdlCnBtTEFhY1l5d1l6WVg4OXkxZlAzeXJSUUZLZUxINWtLNlI3NDhNdXlwOU5mZHlYcEFXeFVWc1dFdlBERmxqVFIwUUlKN3pZalYwNXI0Y3MyQWpXSkRBPT0K",
-      "url": "https://github.com/vrix/LeePanel/releases/download/v1.0.25/LeePanel_1.0.25_amd64.AppImage"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSZWwwT0VMYnhGZXhscm9xVUpIa1llOG84UFJDTzZZbzZJRXFHbTc1RTBvL28reU5ZNktQY1lxMFJ5UXg0ZGtIdDJlTVIyUXZ3dzA5NGM4ZDhKWXJwa0prbUl5S2pMTmc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MjAxOTAyCWZpbGU6TGVlUGFuZWxfMS4wLjI2X2FtZDY0LkFwcEltYWdlCng5ZXJOM2sxdDBtUzE5UzdDTFdnWmExOHVxVVJsL1gvZ3p3TzE0SWEreUdLV29GRXFjUGRvMExzU1B6emhLSko5dG41NmtDVWZHNnVkTm5HWDIxc0JBPT0K",
+      "url": "https://github.com/vrix/LeePanel/releases/download/v1.0.26/LeePanel_1.0.26_amd64.AppImage"
     }
   }
 }
