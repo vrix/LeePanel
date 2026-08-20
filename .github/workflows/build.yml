@@ -82,6 +82,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Test MCP integration
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib mcp::tests
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0.5
         env:
@@ -94,19 +97,19 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "LeePanel ${{ github.ref_name }}"
           releaseBody: |
-            ## v1.0.24 更新说明
+            ## v1.0.25 更新说明
 
-            - 新增 LeePanel MCP，可由 ChatGPT/Codex 查询服务器和站点状态。
-            - 新增 Nginx 检查、核心服务状态、Docker/Podman 状态、容器与镜像列表及受限容器日志等只读 MCP 工具。
-            - 新增按实时容器列表校验目标的启动、停止和重启 MCP 工具。
-            - 新增受控的站点启用与停用工具，并按权限级别约束所有写操作。
-            - 新增仅监听本机并使用随机令牌认证的 AI Broker，MCP 不直接读取 SSH 密码或私钥。
-            - 新增 MCP 显式注册与注销界面，每台服务器可选择未授权、只读、管理或系统管理权限级别。
-            - 新增受权限级别约束的文件读写、普通命令和 `sudo` 特权命令工具。
-            - MCP 默认关闭且默认无服务器权限；授权后不再逐次确认，并记录最近调用审计。
-            - MCP 注册、升级更新、失败回滚和卸载清理沿用 MyTerm 的技术方案。
-            - 修正讨论功能链接，统一指向 vrix/LeePanel。
-            - 版本号更新至 `v1.0.24`。
+            - 新增包含 50 个常用镜像的镜像市场，支持场景分类、分页和一键拉取。
+            - 新增 Docker/Podman 镜像搜索、标签列表及镜像详情展示。
+            - 新增私有镜像仓库登录、目录浏览和安全拉取，密码不写入 LeePanel 数据库。
+            - 新增 Windows、macOS 与 Linux 跨平台 MCP 注册、状态检查和注销能力。
+            - 优化 AppImage 与多种 Codex 安装路径识别，并在注册失败时恢复原配置。
+            - 修复 Podman 标签查询未使用服务器实际镜像源的问题。
+            - 修复部分服务器无法直连 Docker Hub 时镜像详情加载失败的问题。
+            - 修复 Docker/Podman 镜像源读取、删除及用户级配置不准确的问题。
+            - 优化镜像源配置安全性，修改前自动备份，Docker 重启失败时自动回滚。
+            - 更新发布流程，增加 MCP 集成测试并移除 Windows 专用注册脚本依赖。
+            - 版本号更新至 `v1.0.25`。
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}

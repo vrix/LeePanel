@@ -3,9 +3,12 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
+    collections::BTreeMap,
+    ffi::OsString,
     io::{BufRead, BufReader, Read, Write},
     net::TcpStream,
-    path::PathBuf,
+    path::{Path, PathBuf},
+    process::{Command, Output},
     sync::Arc,
     time::Duration,
 };
@@ -86,6 +89,26 @@ pub struct McpAuditEntry {
     pub target: String,
     pub success: bool,
     pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct CodexMcpRegistration {
+    #[serde(default = "default_true")]
+    enabled: bool,
+    transport: CodexMcpTransport,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct CodexMcpTransport {
+    command: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    env: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -988,45 +1011,313 @@ fn json_rpc_error(id: Value, code: i32, message: &str) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
 }
 
-#[cfg(target_os = "windows")]
-fn resource_script(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
-    let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
-    [
-        resource_dir.join("resources").join(name),
-        resource_dir.join(name),
-    ]
-    .into_iter()
-    .find(|path| path.is_file())
-    .ok_or_else(|| format!("LeePanel MCP resource was not found: {name}"))
-}
-
-#[cfg(target_os = "windows")]
-fn run_mcp_script(app: &AppHandle, name: &str) -> Result<String, String> {
-    use std::os::windows::process::CommandExt;
-    let script = resource_script(app, name)?;
-    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
-    let output = std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
-        .arg(script)
-        .arg("-LeePanelPath")
-        .arg(executable)
-        .creation_flags(0x08000000)
-        .output()
-        .map_err(|e| format!("Failed to run LeePanel MCP script: {e}"))?;
-    if !output.status.success() {
-        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if error.is_empty() {
-            format!("LeePanel MCP script failed with status {}", output.status)
-        } else {
-            error
-        });
+fn is_executable_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        return path
+            .metadata()
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false);
+    }
+    #[cfg(not(unix))]
+    true
 }
 
-#[cfg(not(target_os = "windows"))]
-fn run_mcp_script(_app: &AppHandle, _name: &str) -> Result<String, String> {
-    Err("LeePanel MCP registration is currently supported on Windows only".to_string())
+fn codex_file_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "codex.exe"
+    } else {
+        "codex"
+    }
+}
+
+fn codex_on_path() -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|directory| directory.join(codex_file_name()))
+        .find(|candidate| is_executable_file(candidate))
+}
+
+#[cfg(target_os = "windows")]
+fn bundled_codex() -> Option<PathBuf> {
+    let root = dirs::data_local_dir()?
+        .join("OpenAI")
+        .join("Codex")
+        .join("bin");
+    let mut directories = vec![root];
+    let mut matches = Vec::new();
+    while let Some(directory) = directories.pop() {
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                directories.push(path);
+            } else if path.file_name().and_then(|name| name.to_str()) == Some("codex.exe") {
+                let modified = entry
+                    .metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .ok();
+                matches.push((modified, path));
+            }
+        }
+    }
+    matches.sort_by_key(|(modified, _)| *modified);
+    matches.pop().map(|(_, path)| path)
+}
+
+fn find_codex() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    if let Some(path) = bundled_codex() {
+        return Some(path);
+    }
+
+    if let Some(path) = codex_on_path() {
+        return Some(path);
+    }
+
+    let mut candidates = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        candidates.extend([
+            home.join(".local/bin/codex"),
+            home.join(".cargo/bin/codex"),
+            home.join(".npm-global/bin/codex"),
+        ]);
+        #[cfg(target_os = "macos")]
+        candidates.extend([
+            home.join("Applications/Codex.app/Contents/Resources/codex"),
+            home.join("Applications/ChatGPT.app/Contents/Resources/codex"),
+        ]);
+    }
+    #[cfg(target_os = "macos")]
+    candidates.extend([
+        PathBuf::from("/Applications/Codex.app/Contents/Resources/codex"),
+        PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex"),
+        PathBuf::from("/opt/homebrew/bin/codex"),
+        PathBuf::from("/usr/local/bin/codex"),
+    ]);
+    #[cfg(target_os = "linux")]
+    candidates.extend([
+        PathBuf::from("/usr/local/bin/codex"),
+        PathBuf::from("/usr/bin/codex"),
+        PathBuf::from("/home/linuxbrew/.linuxbrew/bin/codex"),
+    ]);
+    candidates
+        .into_iter()
+        .find(|candidate| is_executable_file(candidate))
+}
+
+fn select_mcp_executable(
+    current: PathBuf,
+    appimage: Option<PathBuf>,
+    use_appimage: bool,
+) -> PathBuf {
+    if use_appimage {
+        if let Some(path) = appimage.filter(|path| is_executable_file(path)) {
+            return path;
+        }
+    }
+    current
+}
+
+fn mcp_executable() -> Result<PathBuf, String> {
+    let current = std::env::current_exe().map_err(|e| e.to_string())?;
+    let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from);
+    Ok(select_mcp_executable(
+        current,
+        appimage,
+        cfg!(target_os = "linux"),
+    ))
+}
+
+fn comparable_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir().unwrap_or_default().join(path)
+        }
+    })
+}
+
+fn paths_equal(left: &Path, right: &Path) -> bool {
+    let left = comparable_path(left);
+    let right = comparable_path(right);
+    if cfg!(target_os = "windows") {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    } else {
+        left == right
+    }
+}
+
+fn command_error(action: &str, output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if !stderr.is_empty() { stderr } else { stdout };
+    if detail.is_empty() {
+        format!("{action} failed with status {}", output.status)
+    } else {
+        format!("{action} failed: {detail}")
+    }
+}
+
+fn child_command(program: &Path) -> Command {
+    let mut command = Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    command
+}
+
+fn codex_output(codex: &Path, args: &[&str]) -> Result<Output, String> {
+    child_command(codex)
+        .args(args)
+        .output()
+        .map_err(|e| format!("Failed to run Codex CLI at {}: {e}", codex.display()))
+}
+
+fn get_codex_registration(codex: &Path) -> Result<Option<CodexMcpRegistration>, String> {
+    let output = codex_output(codex, &["mcp", "get", "leepanel", "--json"])?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    serde_json::from_slice(&output.stdout)
+        .map(Some)
+        .map_err(|e| format!("Codex returned invalid LeePanel MCP registration data: {e}"))
+}
+
+fn remove_codex_registration(codex: &Path) -> Result<(), String> {
+    let output = codex_output(codex, &["mcp", "remove", "leepanel"])?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(command_error("Removing LeePanel MCP registration", &output))
+    }
+}
+
+fn add_codex_registration(
+    codex: &Path,
+    command: &Path,
+    args: &[String],
+    env: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    let mut command_args: Vec<OsString> = vec!["mcp".into(), "add".into(), "leepanel".into()];
+    for (key, value) in env {
+        command_args.push("--env".into());
+        command_args.push(format!("{key}={value}").into());
+    }
+    command_args.push("--".into());
+    command_args.push(command.as_os_str().to_owned());
+    command_args.extend(args.iter().map(OsString::from));
+    let output = child_command(codex)
+        .args(&command_args)
+        .output()
+        .map_err(|e| format!("Failed to run Codex CLI at {}: {e}", codex.display()))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(command_error("Adding LeePanel MCP registration", &output))
+    }
+}
+
+fn registration_is_current(registration: &CodexMcpRegistration, executable: &Path) -> bool {
+    registration.enabled
+        && paths_equal(Path::new(&registration.transport.command), executable)
+        && registration.transport.args == ["--mcp"]
+}
+
+fn restore_codex_registration(codex: &Path, previous: Option<&CodexMcpRegistration>) -> bool {
+    let _ = remove_codex_registration(codex);
+    previous
+        .map(|registration| {
+            let env = registration.transport.env.clone().unwrap_or_default();
+            add_codex_registration(
+                codex,
+                Path::new(&registration.transport.command),
+                &registration.transport.args,
+                &env,
+            )
+            .is_ok()
+        })
+        .unwrap_or(true)
+}
+
+fn mcp_version_at(executable: &Path) -> String {
+    child_command(executable)
+        .arg("--mcp-version")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+fn register_mcp() -> Result<(), String> {
+    let codex = find_codex().ok_or_else(|| "ChatGPT / Codex CLI was not found".to_string())?;
+    let executable = mcp_executable()?;
+    if mcp_version_at(&executable).is_empty() {
+        return Err(format!(
+            "LeePanel MCP executable could not be verified: {}",
+            executable.display()
+        ));
+    }
+    let previous = get_codex_registration(&codex)?;
+    if previous
+        .as_ref()
+        .is_some_and(|registration| registration_is_current(registration, &executable))
+    {
+        return Ok(());
+    }
+    if previous.is_some() {
+        remove_codex_registration(&codex)?;
+    }
+    let args = vec!["--mcp".to_string()];
+    if let Err(error) = add_codex_registration(&codex, &executable, &args, &BTreeMap::new()) {
+        let restored = restore_codex_registration(&codex, previous.as_ref());
+        return Err(format!(
+            "{error}. Previous registration restored: {restored}"
+        ));
+    }
+    let verified = match get_codex_registration(&codex) {
+        Ok(registration) => registration
+            .as_ref()
+            .is_some_and(|registration| registration_is_current(registration, &executable)),
+        Err(error) => {
+            let restored = restore_codex_registration(&codex, previous.as_ref());
+            return Err(format!(
+                "{error}. Previous registration restored: {restored}"
+            ));
+        }
+    };
+    if !verified {
+        let restored = restore_codex_registration(&codex, previous.as_ref());
+        return Err(format!(
+            "LeePanel MCP registration verification failed. Previous registration restored: {restored}"
+        ));
+    }
+    Ok(())
+}
+
+fn unregister_mcp() -> Result<(), String> {
+    let Some(codex) = find_codex() else {
+        return Ok(());
+    };
+    let executable = mcp_executable()?;
+    let Some(registration) = get_codex_registration(&codex)? else {
+        return Ok(());
+    };
+    if registration_is_current(&registration, &executable) {
+        remove_codex_registration(&codex)?;
+    }
+    Ok(())
 }
 
 fn set_mcp_enabled(conn: &rusqlite::Connection, enabled: bool) -> Result<(), String> {
@@ -1038,56 +1329,54 @@ fn set_mcp_enabled(conn: &rusqlite::Connection, enabled: bool) -> Result<(), Str
     Ok(())
 }
 
-fn registration_status(app: &AppHandle, enabled: bool) -> Result<McpRegistrationStatus, String> {
-    let output = run_mcp_script(app, "get_leepanel_mcp_status.ps1")?;
-    let value: Value = serde_json::from_str(
-        output
-            .lines()
-            .last()
-            .ok_or_else(|| "LeePanel MCP status returned no data".to_string())?,
-    )
-    .map_err(|e| format!("Invalid LeePanel MCP status: {e}"))?;
+fn registration_status(enabled: bool) -> Result<McpRegistrationStatus, String> {
+    let codex = find_codex();
+    let executable = mcp_executable()?;
+    let registration = codex
+        .as_deref()
+        .map(get_codex_registration)
+        .transpose()?
+        .flatten();
     Ok(McpRegistrationStatus {
-        codex_found: value["codex_found"].as_bool().unwrap_or(false),
-        codex_path: value["codex_path"].as_str().unwrap_or("").to_string(),
-        registered: value["registered"].as_bool().unwrap_or(false),
-        current: value["current"].as_bool().unwrap_or(false),
-        registered_path: value["registered_path"].as_str().unwrap_or("").to_string(),
-        version: value["version"].as_str().unwrap_or("").to_string(),
+        codex_found: codex.is_some(),
+        codex_path: codex
+            .as_deref()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        registered: registration.is_some(),
+        current: registration
+            .as_ref()
+            .is_some_and(|registration| registration_is_current(registration, &executable)),
+        registered_path: registration
+            .as_ref()
+            .map(|registration| registration.transport.command.clone())
+            .unwrap_or_default(),
+        version: mcp_version_at(&executable),
         enabled,
     })
 }
 
 #[tauri::command]
-pub async fn mcp_get_status(
-    app: AppHandle,
-    db: tauri::State<'_, DbPool>,
-) -> Result<McpRegistrationStatus, String> {
+pub async fn mcp_get_status(db: tauri::State<'_, DbPool>) -> Result<McpRegistrationStatus, String> {
     let enabled = {
         let conn = db.lock().map_err(|e| e.to_string())?;
         mcp_enabled(&conn)
     };
-    tauri::async_runtime::spawn_blocking(move || registration_status(&app, enabled))
+    tauri::async_runtime::spawn_blocking(move || registration_status(enabled))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn mcp_register(
-    app: AppHandle,
-    db: tauri::State<'_, DbPool>,
-) -> Result<McpRegistrationStatus, String> {
-    let app_for_script = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        run_mcp_script(&app_for_script, "register_leepanel_mcp.ps1")
-    })
-    .await
-    .map_err(|e| e.to_string())??;
+pub async fn mcp_register(db: tauri::State<'_, DbPool>) -> Result<McpRegistrationStatus, String> {
+    tauri::async_runtime::spawn_blocking(register_mcp)
+        .await
+        .map_err(|e| e.to_string())??;
     {
         let conn = db.lock().map_err(|e| e.to_string())?;
         set_mcp_enabled(&conn, true)?;
     }
-    let status = tauri::async_runtime::spawn_blocking(move || registration_status(&app, true))
+    let status = tauri::async_runtime::spawn_blocking(move || registration_status(true))
         .await
         .map_err(|e| e.to_string())??;
     if !status.current {
@@ -1099,23 +1388,17 @@ pub async fn mcp_register(
 }
 
 #[tauri::command]
-pub async fn mcp_unregister(
-    app: AppHandle,
-    db: tauri::State<'_, DbPool>,
-) -> Result<McpRegistrationStatus, String> {
-    let app_for_script = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        run_mcp_script(&app_for_script, "unregister_leepanel_mcp.ps1")
-    })
-    .await
-    .map_err(|e| e.to_string())??;
+pub async fn mcp_unregister(db: tauri::State<'_, DbPool>) -> Result<McpRegistrationStatus, String> {
+    tauri::async_runtime::spawn_blocking(unregister_mcp)
+        .await
+        .map_err(|e| e.to_string())??;
     {
         let conn = db.lock().map_err(|e| e.to_string())?;
         set_mcp_enabled(&conn, false)?;
         conn.execute("DELETE FROM mcp_permissions", [])
             .map_err(|e| format!("Failed to revoke MCP permissions: {e}"))?;
     }
-    tauri::async_runtime::spawn_blocking(move || registration_status(&app, false))
+    tauri::async_runtime::spawn_blocking(move || registration_status(false))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -1237,6 +1520,56 @@ mod tests {
             response.pointer("/result/capabilities/tools/listChanged"),
             Some(&json!(false))
         );
+    }
+
+    #[test]
+    fn parses_real_codex_registration_shape() {
+        let registration: CodexMcpRegistration = serde_json::from_value(json!({
+            "name": "leepanel",
+            "enabled": true,
+            "transport": {
+                "type": "stdio",
+                "command": "/Applications/LeePanel.app/Contents/MacOS/leepanel",
+                "args": ["--mcp"],
+                "env": null,
+                "env_vars": [],
+                "cwd": null
+            }
+        }))
+        .unwrap();
+        assert!(registration.enabled);
+        assert_eq!(registration.transport.args, ["--mcp"]);
+        assert!(registration.transport.env.is_none());
+    }
+
+    #[test]
+    fn registration_requires_the_exact_executable_and_mcp_argument() {
+        let executable = std::env::current_exe().unwrap();
+        let mut registration = CodexMcpRegistration {
+            enabled: true,
+            transport: CodexMcpTransport {
+                command: executable.to_string_lossy().into_owned(),
+                args: vec!["--mcp".to_string()],
+                env: None,
+            },
+        };
+        assert!(registration_is_current(&registration, &executable));
+        registration.enabled = false;
+        assert!(!registration_is_current(&registration, &executable));
+        registration.enabled = true;
+        registration.transport.args.push("extra".to_string());
+        assert!(!registration_is_current(&registration, &executable));
+    }
+
+    #[test]
+    fn appimage_path_replaces_the_temporary_mount_executable() {
+        let appimage = std::env::current_exe().unwrap();
+        let selected = select_mcp_executable(
+            PathBuf::from("/tmp/.mount_LeePanel/leepanel"),
+            Some(appimage.clone()),
+            true,
+        );
+        assert_eq!(selected, appimage);
     }
 
     #[test]

@@ -121,6 +121,8 @@ pub fn run() {
             commands::server_ops::server_docker_container_remove, commands::server_ops::server_docker_container_batch_action, commands::server_ops::server_docker_container_batch_remove,
             commands::server_ops::server_docker_container_logs, commands::server_ops::server_docker_container_commit,
             commands::server_ops::server_docker_image_list, commands::server_ops::server_docker_image_pull, commands::server_ops::server_docker_image_remove, commands::server_ops::server_docker_image_load, commands::server_ops::server_docker_image_run,
+            commands::server_ops::server_docker_marketplace_search, commands::server_ops::server_docker_marketplace_tags,
+            commands::server_ops::server_docker_registry_login, commands::server_ops::server_docker_registry_logout,
             commands::server_ops::server_docker_get_mirror_config, commands::server_ops::server_docker_set_mirror_config,
             // Cache
             commands::server_ops::server_cache_invalidate,

@@ -1570,6 +1570,41 @@ pub async fn session_exec_with_output(
     Ok((stdout, stderr, exit_code))
 }
 
+/// Execute a command and provide its standard input without exposing the input
+/// in the remote command line. Intended for passwords and other short secrets.
+pub async fn session_exec_with_input(
+    session: &SshSession,
+    cmd: &str,
+    input: &[u8],
+    timeout_secs: u64,
+) -> Result<(String, String, i32), String> {
+    let mut channel = session_open_channel(session).await?;
+    channel.exec(true, cmd).await.map_err(|e| format!("Exec failed: {}", e))?;
+    channel.data(input).await.map_err(|e| format!("Failed to send command input: {}", e))?;
+    channel.eof().await.map_err(|e| format!("Failed to close command input: {}", e))?;
+
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut exit_code: i32 = -1;
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(timeout_secs);
+    loop {
+        tokio::select! {
+            msg = channel.wait() => match msg {
+                Some(ChannelMsg::Data { data }) => stdout.push_str(&String::from_utf8_lossy(&data)),
+                Some(ChannelMsg::ExtendedData { data, ext }) if ext == 1 => stderr.push_str(&String::from_utf8_lossy(&data)),
+                Some(ChannelMsg::ExitStatus { exit_status }) => exit_code = exit_status as i32,
+                Some(ChannelMsg::Eof) => {},
+                Some(ChannelMsg::Close) | None => break,
+                _ => {},
+            },
+            _ = tokio::time::sleep_until(deadline) => {
+                return Err(format!("Command timed out after {}s", timeout_secs));
+            }
+        }
+    }
+    Ok((stdout, stderr, exit_code))
+}
+
 pub async fn session_open_channel_and_exec(
     session: &SshSession,
     cmd: &str,

@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useTranslation } from 'react-i18next'
 import ServiceUnavailable from './ServiceUnavailable'
+import ImageMarketplace from './ImageMarketplace'
 
 interface DockerStatus {
   installed: boolean
@@ -41,7 +42,7 @@ interface DockerPanelProps {
   onNavigateToSoftware?: () => void
 }
 
-type DockerTab = 'containers' | 'images' | 'mirror'
+type DockerTab = 'containers' | 'images' | 'marketplace' | 'mirror'
 
 export default function DockerPanel({ sessionId, onNavigateToSoftware }: DockerPanelProps) {
   const { t } = useTranslation()
@@ -385,14 +386,15 @@ export default function DockerPanel({ sessionId, onNavigateToSoftware }: DockerP
     }
   }
 
-  const handlePullImage = async () => {
-    if (!sessionId || !pullImageName.trim()) return
+  const handlePullImage = async (requestedImage?: string) => {
+    const imageName = requestedImage || pullImageName.trim()
+    if (!sessionId || !imageName) return
     clearMessages()
     startStream()
     setPulling(true)
     try {
-      await invoke<string>('server_docker_image_pull', { sessionId, imageName: pullImageName.trim() })
-      setPullImageName('')
+      await invoke<string>('server_docker_image_pull', { sessionId, imageName })
+      if (!requestedImage) setPullImageName('')
       await fetchImages()
     } catch (e) {
       setError(String(e))
@@ -540,6 +542,9 @@ export default function DockerPanel({ sessionId, onNavigateToSoftware }: DockerP
             <button className={`docker-tab ${activeTab === 'images' ? 'active' : ''}`} onClick={() => setActiveTab('images')}>
               {t('dockerPanel.imagesTab', { count: images.length })}
             </button>
+            <button className={`docker-tab ${activeTab === 'marketplace' ? 'active' : ''}`} onClick={() => setActiveTab('marketplace')}>
+              {t('dockerPanel.marketplaceTab', { defaultValue: '镜像市场' })}
+            </button>
             <button className={`docker-tab ${activeTab === 'mirror' ? 'active' : ''}`} onClick={() => setActiveTab('mirror')}>
               {t('dockerPanel.mirrorTab')}
             </button>
@@ -663,7 +668,7 @@ export default function DockerPanel({ sessionId, onNavigateToSoftware }: DockerP
                   onKeyDown={(e) => { if (e.key === 'Enter') handlePullImage() }}
                   disabled={pulling}
                 />
-                <button className="docker-btn primary" onClick={handlePullImage} disabled={pulling || !pullImageName.trim()}>
+                <button className="docker-btn primary" onClick={() => handlePullImage()} disabled={pulling || !pullImageName.trim()}>
                   {pulling ? t('dockerPanel.pulling') : t('dockerPanel.pullImage')}
                 </button>
                 <button className="docker-btn" onClick={() => setLoadImageModal(true)} disabled={loadingImage} title={t('dockerPanel.loadImage')}>
@@ -698,6 +703,12 @@ export default function DockerPanel({ sessionId, onNavigateToSoftware }: DockerP
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {activeTab === 'marketplace' && sessionId && (
+            <div className="docker-tab-content">
+              <ImageMarketplace sessionId={sessionId} mirrors={mirrors} onPull={handlePullImage} />
             </div>
           )}
 

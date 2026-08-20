@@ -758,6 +758,62 @@ pub async fn server_docker_image_pull(
 }
 
 #[tauri::command]
+pub async fn server_docker_marketplace_search(
+    ssh_mgr: tauri::State<'_, Arc<AsyncMutex<SshManager>>>,
+    session_id: &str,
+    query: &str,
+    registry: &str,
+    username: &str,
+    password: &str,
+) -> Result<Vec<server::MarketplaceImage>, String> {
+    let mgr = ssh_mgr.lock().await;
+    let session = mgr.get_session(session_id)?;
+    drop(mgr);
+    server::docker_marketplace_search(&session, query, registry, username, password).await
+}
+
+#[tauri::command]
+pub async fn server_docker_marketplace_tags(
+    ssh_mgr: tauri::State<'_, Arc<AsyncMutex<SshManager>>>,
+    session_id: &str,
+    image: &str,
+    registry: &str,
+    username: &str,
+    password: &str,
+) -> Result<Vec<server::ImageTagDetail>, String> {
+    let mgr = ssh_mgr.lock().await;
+    let session = mgr.get_session(session_id)?;
+    drop(mgr);
+    server::docker_marketplace_tags(&session, image, registry, username, password).await
+}
+
+#[tauri::command]
+pub async fn server_docker_registry_login(
+    ssh_mgr: tauri::State<'_, Arc<AsyncMutex<SshManager>>>,
+    session_id: &str,
+    registry: &str,
+    username: &str,
+    password: &str,
+) -> Result<String, String> {
+    let mgr = ssh_mgr.lock().await;
+    let session = mgr.get_session(session_id)?;
+    drop(mgr);
+    server::docker_registry_login(&session, registry, username, password).await
+}
+
+#[tauri::command]
+pub async fn server_docker_registry_logout(
+    ssh_mgr: tauri::State<'_, Arc<AsyncMutex<SshManager>>>,
+    session_id: &str,
+    registry: &str,
+) -> Result<String, String> {
+    let mgr = ssh_mgr.lock().await;
+    let session = mgr.get_session(session_id)?;
+    drop(mgr);
+    server::docker_registry_logout(&session, registry).await
+}
+
+#[tauri::command]
 pub async fn server_docker_image_remove(
     ssh_mgr: tauri::State<'_, Arc<AsyncMutex<SshManager>>>,
     session_id: &str,

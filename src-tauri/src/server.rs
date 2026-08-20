@@ -6978,6 +6978,25 @@ pub struct DockerImage {
     pub created: String,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct MarketplaceImage {
+    pub name: String,
+    pub description: String,
+    pub stars: u64,
+    pub official: bool,
+    pub automated: bool,
+    pub source: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ImageTagDetail {
+    pub tag: String,
+    pub digest: String,
+    pub architectures: Vec<String>,
+    pub size: u64,
+    pub updated: String,
+}
+
 async fn container_runtime(session: &SshSession) -> Result<String, String> {
     let (stdout, _, _) = crate::ssh::session_exec_with_output(
         session,
@@ -7775,6 +7794,271 @@ pub async fn docker_image_pull(
     Ok(output)
 }
 
+fn valid_registry_value(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 255
+        && value.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ':' | '/'))
+}
+
+fn parse_marketplace_search(output: &str, source: &str) -> Vec<MarketplaceImage> {
+    output.lines().filter_map(|line| {
+        let parts: Vec<&str> = line.trim().splitn(5, "|||").collect();
+        if parts.len() != 5 || parts[0].is_empty() { return None; }
+        Some(MarketplaceImage {
+            name: parts[0].to_string(),
+            description: parts[1].to_string(),
+            stars: parts[2].parse().unwrap_or(0),
+            official: matches!(parts[3].to_ascii_lowercase().as_str(), "true" | "[ok]" | "[ok] [official]"),
+            automated: matches!(parts[4].to_ascii_lowercase().as_str(), "true" | "[ok]"),
+            source: source.to_string(),
+        })
+    }).collect()
+}
+
+#[cfg(test)]
+mod marketplace_tests {
+    use super::{parse_marketplace_search, valid_registry_value};
+
+    #[test]
+    fn parses_docker_search_rows() {
+        let rows = parse_marketplace_search(
+            "nginx|||Official web server|||21000|||[OK]|||\nredis|||Key-value store|||13000||||||",
+            "Docker Hub",
+        );
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].official);
+        assert_eq!(rows[0].stars, 21000);
+        assert_eq!(rows[1].name, "redis");
+    }
+
+    #[test]
+    fn rejects_shell_characters_in_registry_values() {
+        assert!(valid_registry_value("registry.example.com:5000/team/app"));
+        assert!(!valid_registry_value("registry.example.com;id"));
+        assert!(!valid_registry_value(""));
+    }
+}
+
+const REGISTRY_METADATA_SCRIPT: &str = r#"import base64,json,re,sys,urllib.error,urllib.parse,urllib.request
+p=json.load(sys.stdin)
+registry=p.get('registry','').removeprefix('https://').removeprefix('http://').rstrip('/')
+image=p.get('image','').strip('/')
+user=p.get('username','')
+password=p.get('password','')
+mode=p.get('mode','tags')
+def request(url, accept='application/json'):
+    headers={'Accept':accept,'User-Agent':'LeePanel/1'}
+    if user:
+        headers['Authorization']='Basic '+base64.b64encode((user+':'+password).encode()).decode()
+    req=urllib.request.Request(url,headers=headers)
+    try:
+        response=urllib.request.urlopen(req,timeout=6)
+    except urllib.error.HTTPError as error:
+        challenge=error.headers.get('WWW-Authenticate','')
+        if error.code!=401 or not challenge.lower().startswith('bearer '): raise
+        values=dict(re.findall(r'(\w+)="([^"]*)"',challenge))
+        token_url=values.get('realm','')+'?'+urllib.parse.urlencode({k:values[k] for k in ('service','scope') if values.get(k)})
+        token_headers={'User-Agent':'LeePanel/1'}
+        if user: token_headers['Authorization']=headers['Authorization']
+        with urllib.request.urlopen(urllib.request.Request(token_url,headers=token_headers),timeout=6) as token_response:
+            token_data=json.load(token_response)
+        headers['Authorization']='Bearer '+(token_data.get('token') or token_data.get('access_token'))
+        response=urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=6)
+    with response:
+        return json.load(response),dict(response.headers)
+if mode=='catalog':
+    data,_=request('https://'+registry+'/v2/_catalog?n=100')
+    q=image.lower()
+    print(json.dumps([x for x in data.get('repositories',[]) if q in x.lower()]))
+    raise SystemExit
+if not registry or registry in ('docker.io','registry-1.docker.io','index.docker.io'):
+    repo=image if '/' in image else 'library/'+image
+    data,_=request('https://hub.docker.com/v2/repositories/'+repo+'/tags?page_size=50')
+    out=[]
+    for item in data.get('results',[]):
+        architectures=sorted(set(x.get('architecture','') for x in item.get('images',[]) if x.get('architecture')))
+        digests=sorted(set(x.get('digest','') for x in item.get('images',[]) if x.get('digest')))
+        out.append({'tag':item.get('name',''),'digest':digests[0] if len(digests)==1 else ', '.join(digests),'architectures':architectures,'size':item.get('full_size') or 0,'updated':item.get('last_updated','')})
+    print(json.dumps(out))
+else:
+    tags,_=request('https://'+registry+'/v2/'+image+'/tags/list?n=50')
+    out=[{'tag':tag,'digest':'','architectures':[],'size':0,'updated':''} for tag in (tags.get('tags') or [])[:100]]
+    print(json.dumps(out))
+"#;
+
+async fn run_registry_metadata(
+    session: &SshSession,
+    payload: &serde_json::Value,
+) -> Result<String, String> {
+    let path = format!("/tmp/leepanel-registry-{}.py", uuid::Uuid::new_v4());
+    crate::ssh::session_write_file(session, &path, REGISTRY_METADATA_SCRIPT).await?;
+    let input = serde_json::to_vec(payload).map_err(|e| e.to_string())?;
+    let result = crate::ssh::session_exec_with_input(session, &format!("python3 {}", path), &input, 60).await;
+    let _ = crate::ssh::session_exec_with_output(session, &format!("rm -f {}", path), 5).await;
+    let (stdout, stderr, code) = result?;
+    if code > 0 || stdout.trim().is_empty() {
+        let detail = stderr.lines().rev().find(|line| !line.trim().is_empty()).unwrap_or("Registry returned no data");
+        return Err(detail.trim().into());
+    }
+    Ok(stdout)
+}
+
+/// Search the active runtime's public registry, or the catalog of a configured private registry.
+pub async fn docker_marketplace_search(
+    session: &SshSession,
+    query: &str,
+    registry: &str,
+    username: &str,
+    password: &str,
+) -> Result<Vec<MarketplaceImage>, String> {
+    let query = query.trim().to_lowercase();
+    if query.len() > 100 || query.chars().any(|c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '/'))) {
+        return Err("Invalid search query".into());
+    }
+    let registry = registry.trim().trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/');
+    if !registry.is_empty() {
+        if !valid_registry_value(registry) { return Err("Invalid registry address".into()); }
+        let stdout = run_registry_metadata(session, &serde_json::json!({
+            "mode": "catalog", "registry": registry, "image": query,
+            "username": username, "password": password,
+        })).await?;
+        let names: Vec<String> = serde_json::from_str(stdout.trim()).map_err(|e| format!("Invalid registry response: {}", e))?;
+        return Ok(names.into_iter().map(|name| MarketplaceImage {
+            name: format!("{}/{}", registry, name), description: "Private registry image".into(),
+            stars: 0, official: false, automated: false, source: registry.into(),
+        }).collect());
+    }
+    if query.is_empty() { return Ok(Vec::new()); }
+    let runtime = container_runtime(session).await?;
+    if let Ok(mirrors) = docker_get_mirror_config(session, &SshCache::new(), "").await {
+        if !mirrors.is_empty() {
+            let repository = if query.contains('/') { query.clone() } else { format!("library/{}", query) };
+            for mirror in &mirrors {
+                let mirror = mirror.trim().trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/');
+                if !valid_registry_value(mirror) { continue; }
+                if let Ok(stdout) = run_registry_metadata(session, &serde_json::json!({
+                    "mode": "tags", "registry": mirror, "image": repository,
+                    "username": "", "password": "",
+                })).await {
+                    if serde_json::from_str::<Vec<ImageTagDetail>>(stdout.trim()).is_ok_and(|tags| !tags.is_empty()) {
+                        return Ok(vec![MarketplaceImage {
+                            name: query,
+                            description: "Image verified through the configured registry mirror".into(),
+                            stars: 0,
+                            official: false,
+                            automated: false,
+                            source: mirror.into(),
+                        }]);
+                    }
+                }
+            }
+            return Err(format!(
+                "The configured registry mirrors could not find '{}'. Enter an exact repository name; pull mirrors do not support keyword search.",
+                query
+            ));
+        }
+    }
+    let template = if runtime == "podman" {
+        "{{.Name}}|||{{.Description}}|||{{.Stars}}|||{{.Official}}|||{{.Automated}}"
+    } else {
+        "{{.Name}}|||{{.Description}}|||{{.StarCount}}|||{{.IsOfficial}}|||{{.IsAutomated}}"
+    };
+    let cmd = format!("{} search --limit 100 --format '{}' '{}'", runtime, template, query);
+    let (stdout, stderr, code) = crate::ssh::session_exec_with_output(session, &cmd, 60).await?;
+    let result = parse_marketplace_search(&stdout, if runtime == "podman" { "Configured registries" } else { "Docker Hub" });
+    if result.is_empty() && code > 0 {
+        return Err(if stderr.trim().is_empty() { "Image search failed".into() } else { stderr.trim().into() });
+    }
+    Ok(result)
+}
+
+pub async fn docker_marketplace_tags(
+    session: &SshSession,
+    image: &str,
+    registry: &str,
+    username: &str,
+    password: &str,
+) -> Result<Vec<ImageTagDetail>, String> {
+    let registry = registry.trim().trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/');
+    let mut repository = image.trim().to_lowercase();
+    if !registry.is_empty() {
+        repository = repository.strip_prefix(&format!("{}/", registry)).unwrap_or(&repository).to_string();
+    }
+    if !valid_registry_value(&repository) || (!registry.is_empty() && !valid_registry_value(registry)) {
+        return Err("Invalid image or registry name".into());
+    }
+    let runtime = container_runtime(session).await?;
+    if registry.is_empty() {
+        let repo = if repository.contains('/') { repository.clone() } else { format!("library/{}", repository) };
+        if let Ok(mirrors) = docker_get_mirror_config(session, &SshCache::new(), "").await {
+            for mirror in mirrors {
+                let mirror = mirror.trim().trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/');
+                if !valid_registry_value(mirror) { continue; }
+                if let Ok(stdout) = run_registry_metadata(session, &serde_json::json!({
+                    "mode": "tags", "registry": mirror, "image": repo,
+                    "username": "", "password": "",
+                })).await {
+                    if let Ok(tags) = serde_json::from_str::<Vec<ImageTagDetail>>(stdout.trim()) {
+                        if !tags.is_empty() { return Ok(tags); }
+                    }
+                }
+            }
+        }
+    }
+    if runtime == "podman" {
+        let qualified = if !registry.is_empty() {
+            format!("{}/{}", registry, repository)
+        } else if repository.contains('/') {
+            format!("docker.io/{}", repository)
+        } else {
+            format!("docker.io/library/{}", repository)
+        };
+        let cmd = format!("podman search --list-tags --format '{{{{.Tag}}}}' '{}'", qualified);
+        if let Ok((stdout, _, code)) = crate::ssh::session_exec_with_output(session, &cmd, 45).await {
+            let tags: Vec<ImageTagDetail> = stdout.lines()
+                .map(str::trim)
+                .filter(|tag| !tag.is_empty() && *tag != "TAG")
+                .map(|tag| ImageTagDetail { tag: tag.into(), digest: String::new(), architectures: Vec::new(), size: 0, updated: String::new() })
+                .collect();
+            if !tags.is_empty() && code <= 0 { return Ok(tags); }
+            if !tags.is_empty() { return Ok(tags); }
+        }
+    }
+
+    let stdout = run_registry_metadata(session, &serde_json::json!({
+        "mode": "tags", "registry": registry, "image": repository,
+        "username": username, "password": password,
+    })).await?;
+    serde_json::from_str(stdout.trim()).map_err(|e| format!("Invalid tag response: {}", e))
+}
+
+pub async fn docker_registry_login(
+    session: &SshSession,
+    registry: &str,
+    username: &str,
+    password: &str,
+) -> Result<String, String> {
+    let registry = registry.trim().trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/');
+    if !valid_registry_value(registry) || !valid_registry_value(username) || password.is_empty() {
+        return Err("Registry, username and password are required".into());
+    }
+    let runtime = container_runtime(session).await?;
+    let cmd = format!("{} login {} --username {} --password-stdin", runtime, registry, username);
+    let mut input = password.as_bytes().to_vec(); input.push(b'\n');
+    let (stdout, stderr, code) = crate::ssh::session_exec_with_input(session, &cmd, &input, 60).await?;
+    if code > 0 { return Err(if stderr.trim().is_empty() { stdout.trim().into() } else { stderr.trim().into() }); }
+    Ok(format!("{} login succeeded", runtime))
+}
+
+pub async fn docker_registry_logout(session: &SshSession, registry: &str) -> Result<String, String> {
+    let registry = registry.trim().trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/');
+    if !valid_registry_value(registry) { return Err("Invalid registry address".into()); }
+    let runtime = container_runtime(session).await?;
+    let (stdout, stderr, code) = crate::ssh::session_exec_with_output(session, &format!("{} logout {}", runtime, registry), 30).await?;
+    if code > 0 { return Err(if stderr.trim().is_empty() { stdout.trim().into() } else { stderr.trim().into() }); }
+    Ok(format!("{} logout succeeded", runtime))
+}
+
 /// Remove a Docker image
 pub async fn docker_image_remove(
     session: &SshSession,
@@ -7870,7 +8154,7 @@ pub async fn docker_get_mirror_config(
     let cmd = if runtime == "docker" {
         r#"cat /etc/docker/daemon.json 2>/dev/null | python3 -c "import sys,json;d=json.load(sys.stdin);print('\n'.join(d.get('registry-mirrors',[])))" 2>/dev/null || echo """#.to_string()
     } else {
-        r#"sed -n '/^\[\[registry\.mirror\]\]/{n;s/^[[:space:]]*location[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p;}' /etc/containers/registries.conf.d/leepanel-mirrors.conf 2>/dev/null || true"#.to_string()
+        r#"podman info --format '{{json .Registries}}' 2>/dev/null | python3 -c "import sys,json;d=json.load(sys.stdin);print('\n'.join(x.get('Location','') for x in d.get('docker.io',{}).get('Mirrors',[]) if x.get('Location')))" 2>/dev/null || true"#.to_string()
     };
     let (stdout, _, _) = crate::ssh::session_exec_with_output(session, &cmd, 10).await?;
     let mirrors: Vec<String> = stdout
@@ -7899,18 +8183,43 @@ pub async fn docker_set_mirror_config(
     }
 
     let script = if runtime == "docker" {
-        let mirrors_json: Vec<String> = safe_mirrors.iter().map(|m| format!("\"{}\"", m)).collect();
-        let mirrors_array = mirrors_json.join(",");
+        let mirrors_array = serde_json::to_string(&safe_mirrors).map_err(|e| e.to_string())?;
         format!(r#"
 mkdir -p /etc/docker
-cat > /etc/docker/daemon.json << 'DAEMON_EOF'
-{{
-  "registry-mirrors": [{mirrors}]
-}}
-DAEMON_EOF
+backup=""
+if [ -f /etc/docker/daemon.json ]; then
+  backup="/etc/docker/daemon.json.leepanel.bak.$(date +%Y%m%d%H%M%S)"
+  cp -p /etc/docker/daemon.json "$backup"
+fi
+python3 - << 'PY_EOF'
+import json, os
+path = "/etc/docker/daemon.json"
+try:
+    with open(path, "r", encoding="utf-8") as handle:
+        config = json.load(handle)
+except (FileNotFoundError, json.JSONDecodeError):
+    config = {{}}
+mirrors = {mirrors}
+if mirrors:
+    config["registry-mirrors"] = mirrors
+else:
+    config.pop("registry-mirrors", None)
+temp = path + ".leepanel.tmp"
+with open(temp, "w", encoding="utf-8") as handle:
+    json.dump(config, handle, indent=2)
+    handle.write("\n")
+os.replace(temp, path)
+PY_EOF
 systemctl daemon-reload
-systemctl restart docker
-echo "Docker mirror configured: {mirrors}"
+if ! systemctl restart docker; then
+  if [ -n "$backup" ] && [ -f "$backup" ]; then
+    cp -p "$backup" /etc/docker/daemon.json
+    systemctl restart docker || true
+  fi
+  echo "Docker restart failed; previous configuration restored" >&2
+  exit 1
+fi
+echo "Docker registry mirrors updated"
 "#, mirrors = mirrors_array)
     } else {
         let entries = safe_mirrors
@@ -7919,9 +8228,23 @@ echo "Docker mirror configured: {mirrors}"
             .map(|m| format!("[[registry.mirror]]\nlocation = \"{}\"", m))
             .collect::<Vec<_>>()
             .join("\n\n");
+        let hosts = safe_mirrors.iter()
+            .map(|m| m.trim_start_matches("https://").trim_start_matches("http://").split('/').next().unwrap_or(m))
+            .collect::<Vec<_>>().join(" ");
         format!(r#"
-mkdir -p /etc/containers/registries.conf.d
-cat > /etc/containers/registries.conf.d/leepanel-mirrors.conf << 'REGISTRY_EOF'
+for host in {hosts}; do
+  if ! getent ahosts "$host" >/dev/null 2>&1; then
+    echo "Mirror host cannot be resolved: $host" >&2
+    exit 1
+  fi
+done
+config_dir="${{XDG_CONFIG_HOME:-$HOME/.config}}/containers/registries.conf.d"
+config_file="$config_dir/leepanel-mirrors.conf"
+mkdir -p "$config_dir"
+if [ -f "$config_file" ]; then
+  cp -p "$config_file" "$config_file.leepanel.bak.$(date +%Y%m%d%H%M%S)"
+fi
+cat > "$config_file" << 'REGISTRY_EOF'
 # Managed by LeePanel
 [[registry]]
 prefix = "docker.io"
@@ -7930,8 +8253,8 @@ location = "docker.io"
 {entries}
 REGISTRY_EOF
 podman info >/dev/null
-echo "Podman registry mirrors configured"
-"#, entries = entries)
+echo "Podman registry mirrors configured for $USER"
+"#, entries = entries, hosts = hosts)
     };
 
     let (stdout, stderr, code) = crate::ssh::session_exec_with_output(session, &script, 30).await?;
@@ -7942,7 +8265,11 @@ echo "Podman registry mirrors configured"
         ));
     }
     if runtime == "docker" {
-        Ok("Docker mirror configured successfully. Docker service restarted.".to_string())
+        if safe_mirrors.is_empty() {
+            Ok("Docker registry mirrors removed successfully. Docker service restarted.".to_string())
+        } else {
+            Ok("Docker mirror configured successfully. Docker service restarted.".to_string())
+        }
     } else {
         Ok("Podman registry mirrors configured successfully.".to_string())
     }
