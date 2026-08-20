@@ -6,6 +6,8 @@ import { ClipboardAddon } from '@xterm/addon-clipboard'
 import '@xterm/xterm/css/xterm.css'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { shouldBlockMouseMode } from './terminalMouseModes'
+import { shouldCopyTerminalSelection } from './terminalKeyboard'
 
 interface TerminalProps {
   sessionId: string | null
@@ -71,8 +73,6 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ ses
   const termRef = useRef<XTerminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const sidRef = useRef(sessionId)
-  // ponytail: track selection state ourselves because ClipboardAddon may clear it before onData fires
-  const hasSelectionRef = useRef(false)
 
   useEffect(() => {
     sidRef.current = sessionId
@@ -96,23 +96,24 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ ses
     term.loadAddon(fitAddon)
     term.loadAddon(webLinksAddon)
     term.open(containerRef.current)
-    // ponytail: block all DECSET/DECRST mouse-tracking sequences so local text selection works
+    // Block DECSET mouse-tracking sequences so local text selection works; allow DECRST cleanup.
     // Remote shells (bash/tmux/vim) send \e[?1000h etc. which capture mouse events
-    const MOUSE_MODES = new Set([9, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1015])
     for (const final of ['h', 'l']) {
       term.parser.registerCsiHandler({ final, prefix: '?' }, (params) => {
-        const p = Array.isArray(params[0]) ? params[0][0] : params[0]
-        if (MOUSE_MODES.has(p)) return true // block mouse tracking
-        return false
+        return shouldBlockMouseMode(final, params)
       })
     }
 
     const clipboardAddon = new ClipboardAddon()
     term.loadAddon(clipboardAddon)
 
-    // Track selection state for Ctrl+C copy logic
-    term.onSelectionChange(() => {
-      hasSelectionRef.current = term.hasSelection()
+    // Handle copy before xterm turns Ctrl+C into terminal input and clears the selection.
+    term.attachCustomKeyEventHandler((event) => {
+      if (shouldCopyTerminalSelection(event, term.hasSelection())) {
+        navigator.clipboard.writeText(term.getSelection()).catch(() => {})
+        return false
+      }
+      return true
     })
 
     // ponytail: sync remote PTY size with xterm.js after every fit
@@ -127,14 +128,6 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ ses
     term.onData((data) => {
       const sid = sidRef.current
       if (sid) {
-        // ponytail: when text is selected, Ctrl+C should copy only (not send interrupt)
-        // use our own ref because ClipboardAddon may have cleared term.hasSelection()
-        if (data === '\x03' && hasSelectionRef.current) {
-          navigator.clipboard.writeText(term.getSelection()).catch(() => {})
-          term.clearSelection()
-          hasSelectionRef.current = false
-          return
-        }
         invoke('ssh_input', { sessionId: sid, data })
       }
     })

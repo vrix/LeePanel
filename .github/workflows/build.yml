@@ -97,19 +97,14 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "LeePanel ${{ github.ref_name }}"
           releaseBody: |
-            ## v1.0.25 更新说明
+            ## v1.0.26 更新说明
 
-            - 新增包含 50 个常用镜像的镜像市场，支持场景分类、分页和一键拉取。
-            - 新增 Docker/Podman 镜像搜索、标签列表及镜像详情展示。
-            - 新增私有镜像仓库登录、目录浏览和安全拉取，密码不写入 LeePanel 数据库。
-            - 新增 Windows、macOS 与 Linux 跨平台 MCP 注册、状态检查和注销能力。
-            - 优化 AppImage 与多种 Codex 安装路径识别，并在注册失败时恢复原配置。
-            - 修复 Podman 标签查询未使用服务器实际镜像源的问题。
-            - 修复部分服务器无法直连 Docker Hub 时镜像详情加载失败的问题。
-            - 修复 Docker/Podman 镜像源读取、删除及用户级配置不准确的问题。
-            - 优化镜像源配置安全性，修改前自动备份，Docker 重启失败时自动回滚。
-            - 更新发布流程，增加 MCP 集成测试并移除 Windows 专用注册脚本依赖。
-            - 版本号更新至 `v1.0.25`。
+            - 修复 Docker/Podman 拉取镜像时进度日志导致页面自动跳动的问题。
+            - 修复终端复制快捷键被误发送到远端、导致选区清除的问题。
+            - 新增终端选中文字后按 Enter 直接复制到剪贴板，并保留选中状态。
+            - 优化终端鼠标模式处理，兼容组合控制参数并允许正确退出鼠标跟踪。
+            - 增加终端复制快捷键和鼠标模式回归测试。
+            - 版本号更新至 `v1.0.26`。
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}

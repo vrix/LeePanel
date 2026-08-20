@@ -57,7 +57,7 @@ export default function DockerPanel({ sessionId, onNavigateToSoftware }: DockerP
   // Streaming log for pull
   const [streamLogs, setStreamLogs] = useState<string[]>([])
   const [streamActive, setStreamActive] = useState(false)
-  const streamEndRef = useRef<HTMLDivElement>(null)
+  const streamBodyRef = useRef<HTMLDivElement>(null)
 
   // Containers
   const [containers, setContainers] = useState<DockerContainer[]>([])
@@ -157,9 +157,12 @@ export default function DockerPanel({ sessionId, onNavigateToSoftware }: DockerP
     return () => { unlisten.then(fn => fn()) }
   }, [sessionId])
 
-  // Auto-scroll stream log
+  // Keep the stream log pinned to its latest entry without moving the page.
   useEffect(() => {
-    streamEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const streamBody = streamBodyRef.current
+    if (streamBody) {
+      streamBody.scrollTop = streamBody.scrollHeight
+    }
   }, [streamLogs])
 
   useEffect(() => {
@@ -523,11 +526,10 @@ export default function DockerPanel({ sessionId, onNavigateToSoftware }: DockerP
               <button className="docker-stream-clear" onClick={() => setStreamLogs([])}>✕ {t('dockerPanel.streamClear')}</button>
             )}
           </div>
-          <div className="docker-stream-body">
+          <div ref={streamBodyRef} className="docker-stream-body">
             {streamLogs.map((line, i) => (
               <div key={i} className="docker-stream-line">{line}</div>
             ))}
-            <div ref={streamEndRef} />
           </div>
         </div>
       )}
